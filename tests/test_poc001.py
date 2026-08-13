@@ -34,7 +34,7 @@ def test_finite_winding_reference_is_symmetric_and_close_to_filament_oracle():
     config = POC001Config()
     finite = finite_source_reference(config, quadrature_order=32)
     filament = analytical_reference(config)
-    assert np.allclose(finite.b_t[:2], finite.b_t[:1:-1], rtol=1e-12, atol=0.0)
+    assert np.allclose(finite.b_t, finite.b_t[::-1], rtol=1e-12, atol=0.0)
     # The POC source is only 2 mm x 2 mm around a 50 mm mean radius, so its
     # finite-section correction should be much smaller than the FEM validation gate.
     assert np.max(np.abs(finite.b_t / filament.b_t - 1.0)) < 2e-4
