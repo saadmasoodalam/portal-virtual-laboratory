@@ -1,0 +1,1 @@
+PVL-2H validation is executed by CI through TypeScript typecheck, frontend production build, Python/API tests, and the existing POC-001 through POC-005 FEM regression chain. This file intentionally contains no executable test code and exists only to record the browser-boundary validation scope.
