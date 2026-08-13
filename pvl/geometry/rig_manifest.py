@@ -2,7 +2,7 @@ from enum import StrEnum
 from hashlib import sha256
 import json
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class RigShape(StrEnum):
@@ -22,8 +22,8 @@ class GeometryComponent(BaseModel):
     center_m: tuple[float, float, float]
     axis: tuple[float, float, float] | None = None
     parameters_m: dict[str, float]
-    integer_parameters: dict[str, int] = {}
-    metadata: dict[str, str | bool] = {}
+    integer_parameters: dict[str, int] = Field(default_factory=dict)
+    metadata: dict[str, str | bool] = Field(default_factory=dict)
 
 
 class RigGeometryManifest(BaseModel):
