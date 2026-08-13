@@ -136,6 +136,14 @@ export async function fetchPreviewHealth(signal?: AbortSignal): Promise<PreviewA
   return { status: 'ok', apiVersion, scope: 'preview_geometry_only', solverExecution: false };
 }
 
+export async function fetchRigTemplate(signal?: AbortSignal): Promise<Record<string, unknown>> {
+  const response = await fetch(endpoint('/api/v1/rig/template'), { signal });
+  const payload = await readJson(response);
+  if (!response.ok) throw new Error(`Rig template request failed (HTTP ${response.status}).`);
+  if (!isRecord(payload)) throw new Error('Rig template response must be a JSON object.');
+  return payload;
+}
+
 export async function requestRigPreview(rigManifest: unknown, signal?: AbortSignal): Promise<PreviewApiResult> {
   const response = await fetch(endpoint('/api/v1/rig/preview'), {
     method: 'POST',
