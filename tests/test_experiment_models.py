@@ -30,20 +30,25 @@ def _config(**updates):
 def test_default_experiment_is_air_open_boundary_and_non_biological():
     config = _config()
     assert config.medium == SampleMedium.AIR
+    assert config.medium.material_id == "air_baseline"
     assert config.copper_boundary_state == BoundaryCircuitState.OPEN
     assert config.biological_testing is False
 
 
-def test_off_drive_rejects_hidden_current_or_phase():
+def test_off_drive_rejects_hidden_state_parameters():
     with pytest.raises(ValidationError):
         CoilDriveState(mode=DriveMode.OFF, current_a=1.0)
     with pytest.raises(ValidationError):
         CoilDriveState(mode=DriveMode.OFF, phase_rad=0.5)
+    with pytest.raises(ValidationError):
+        CoilDriveState(mode=DriveMode.OFF, polarity=-1)
 
 
 def test_dc_and_harmonic_drive_require_explicit_valid_parameters():
     with pytest.raises(ValidationError):
         CoilDriveState(mode=DriveMode.DC)
+    with pytest.raises(ValidationError):
+        CoilDriveState(mode=DriveMode.DC, current_a=1.0, omega_sign=-1)
     with pytest.raises(ValidationError):
         CoilDriveState(mode=DriveMode.HARMONIC, current_a=1.0)
     drive = CoilDriveState(
