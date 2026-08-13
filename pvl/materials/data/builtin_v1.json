@@ -1,0 +1,140 @@
+{
+  "library_version": "1.0.0",
+  "materials": [
+    {
+      "material_id": "air_baseline",
+      "display_name": "Air (engineering baseline)",
+      "version": "1.0.0",
+      "category": "gas",
+      "model_kind": "nonmagnetic",
+      "properties": {
+        "electrical_conductivity_s_m": 0.0,
+        "relative_permeability": 1.0,
+        "relative_permittivity": 1.0006,
+        "density_kg_m3": 1.204,
+        "specific_heat_j_kg_k": 1005.0,
+        "thermal_conductivity_w_m_k": 0.0257,
+        "reference_temperature_k": 293.15
+      },
+      "provenance": {
+        "status": "engineering_baseline",
+        "source_label": "PVL generic engineering baseline",
+        "notes": "Not a measurement of the actual laboratory air state."
+      },
+      "assumptions": ["Dry room-temperature air approximation."],
+      "fidelity_limitations": ["Humidity, pressure and exact temperature are not represented by this baseline."]
+    },
+    {
+      "material_id": "copper_baseline",
+      "display_name": "Copper (engineering baseline)",
+      "version": "1.0.0",
+      "category": "metal",
+      "model_kind": "nonmagnetic",
+      "properties": {
+        "electrical_conductivity_s_m": 58000000.0,
+        "relative_permeability": 1.0,
+        "relative_permittivity": 1.0,
+        "density_kg_m3": 8960.0,
+        "specific_heat_j_kg_k": 385.0,
+        "thermal_conductivity_w_m_k": 400.0,
+        "reference_temperature_k": 293.15
+      },
+      "provenance": {
+        "status": "validated_benchmark",
+        "source_label": "PVL POC-004/005 retained conductivity baseline",
+        "notes": "Conductivity is the retained validation value; remaining properties are engineering baselines."
+      },
+      "fidelity_limitations": ["Actual copper alloy, temper and temperature coefficient require supplier or measured data."]
+    },
+    {
+      "material_id": "borosilicate_glass_baseline",
+      "display_name": "Borosilicate-like glass (engineering baseline)",
+      "version": "1.0.0",
+      "category": "glass",
+      "model_kind": "nonmagnetic",
+      "properties": {
+        "electrical_conductivity_s_m": 1e-12,
+        "relative_permeability": 1.0,
+        "relative_permittivity": 4.6,
+        "density_kg_m3": 2230.0,
+        "specific_heat_j_kg_k": 830.0,
+        "thermal_conductivity_w_m_k": 1.2,
+        "reference_temperature_k": 293.15
+      },
+      "provenance": {
+        "status": "engineering_baseline",
+        "source_label": "PVL generic engineering baseline",
+        "notes": "Use only until the actual sample-vessel glass is identified."
+      },
+      "fidelity_limitations": ["Dielectric properties are composition- and frequency-dependent."]
+    },
+    {
+      "material_id": "distilled_water_baseline",
+      "display_name": "Distilled water (engineering baseline)",
+      "version": "1.0.0",
+      "category": "liquid",
+      "model_kind": "nonmagnetic",
+      "properties": {
+        "electrical_conductivity_s_m": 5.5e-6,
+        "relative_permeability": 1.0,
+        "relative_permittivity": 80.0,
+        "density_kg_m3": 998.2,
+        "specific_heat_j_kg_k": 4182.0,
+        "thermal_conductivity_w_m_k": 0.598,
+        "reference_temperature_k": 293.15
+      },
+      "provenance": {
+        "status": "engineering_baseline",
+        "source_label": "PVL generic engineering baseline",
+        "notes": "Actual conductivity depends strongly on purity and contamination."
+      },
+      "fidelity_limitations": ["Frequency-dependent dielectric dispersion is not represented by the scalar baseline."]
+    },
+    {
+      "material_id": "saline_0p9_baseline",
+      "display_name": "0.9% saline comparison baseline",
+      "version": "1.0.0",
+      "category": "liquid",
+      "model_kind": "nonmagnetic",
+      "properties": {
+        "electrical_conductivity_s_m": 1.5,
+        "relative_permeability": 1.0,
+        "relative_permittivity": 78.0,
+        "density_kg_m3": 1005.0,
+        "specific_heat_j_kg_k": 4000.0,
+        "thermal_conductivity_w_m_k": 0.6,
+        "reference_temperature_k": 293.15
+      },
+      "provenance": {
+        "status": "engineering_baseline",
+        "source_label": "PVL comparison-arm engineering baseline",
+        "notes": "Comparison medium only; not treated as a text-confirmed portal requirement."
+      },
+      "fidelity_limitations": ["Conductivity and permittivity depend on concentration, temperature and frequency."]
+    },
+    {
+      "material_id": "mild_steel_linear_baseline",
+      "display_name": "Mild steel (linear placeholder)",
+      "version": "1.0.0",
+      "category": "metal",
+      "model_kind": "linear_placeholder",
+      "properties": {
+        "electrical_conductivity_s_m": 6000000.0,
+        "relative_permeability": 100.0,
+        "relative_permittivity": 1.0,
+        "density_kg_m3": 7850.0,
+        "specific_heat_j_kg_k": 486.0,
+        "thermal_conductivity_w_m_k": 50.0,
+        "reference_temperature_k": 293.15
+      },
+      "provenance": {
+        "status": "engineering_baseline",
+        "source_label": "PVL linear placeholder baseline",
+        "notes": "Not suitable as a high-fidelity representation of the actual frame steel."
+      },
+      "assumptions": ["Constant relative permeability is used only for early controlled integration tests."],
+      "fidelity_limitations": ["Real ferromagnetic steel has nonlinear B-H response, hysteresis, saturation and batch dependence."],
+      "solver_warning": "Do not interpret high-field results as hardware-fidelity predictions until the actual steel grade and B-H data are supplied."
+    }
+  ]
+}
