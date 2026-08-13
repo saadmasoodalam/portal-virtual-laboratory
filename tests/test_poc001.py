@@ -54,13 +54,31 @@ def test_geo_contains_required_physical_groups():
     assert 'Physical Curve("coil", 101)' in text
 
 
-def test_axisymmetric_geo_has_conformal_air_coil_regions():
-    text = render_axisymmetric_gmsh_geo(POC001Config())
+def test_axisymmetric_geo_has_conformal_air_coil_regions_and_probe_refinement():
+    config = POC001Config()
+    text = render_axisymmetric_gmsh_geo(config)
     assert 'Physical Surface("Air", 1)' in text
     assert 'Physical Surface("Coil", 2)' in text
     assert 'Physical Curve("Boundary", 10)' in text
     assert "Plane Surface(30) = {20, 21};" in text
     assert "Plane Surface(31) = {21};" in text
+    assert "Field[1] = Box;" in text
+    assert "Background Field = 1;" in text
+    assert f"Rair = {config.air.fem_radius_m:.17g};" in text
+    assert f"Hair = {config.air.fem_half_height_m:.17g};" in text
+
+
+def test_refined_mesh_sizes_scale_with_global_characteristic_length():
+    coarse = render_axisymmetric_gmsh_geo(
+        POC001Config(mesh=MeshConfig(characteristic_length_m=0.03, order=1))
+    )
+    fine = render_axisymmetric_gmsh_geo(
+        POC001Config(mesh=MeshConfig(characteristic_length_m=0.012, order=1))
+    )
+    assert "hCoil = 0.001;" in coarse
+    assert "hCoil = 0.00040000000000000002;" in fine
+    assert "hProbe = 0.0015;" in coarse
+    assert "hProbe = 0.00059999999999999995;" in fine
 
 
 def test_getdp_model_is_axisymmetric_established_physics_only():
