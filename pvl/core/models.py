@@ -11,7 +11,7 @@ class FrozenModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     def canonical_json(self) -> str:
-        return json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ","))
+        return json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
 
     def configuration_hash(self) -> str:
         return sha256(self.canonical_json().encode("utf-8")).hexdigest()
