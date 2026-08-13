@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from pvl.core.models import POC001Config
+from pvl.core.models import MeshConfig, POC001Config
 from pvl.geometry.poc001 import write_gmsh_geo
 from pvl.solvers.getdp.poc001_run import run_mesh_convergence
 from pvl.solvers.getdp.runner import SolverUnavailableError, discover_executables, solver_versions
@@ -37,7 +37,7 @@ def _cmd_poc001_fem(args: argparse.Namespace) -> int:
         print(f"PVL FEM status: NOT READY — {exc}")
         return 2
 
-    config = POC001Config()
+    config = POC001Config(mesh=MeshConfig(characteristic_length_m=args.mesh_sizes[0], order=args.order))
     output = Path(args.output)
     points = run_mesh_convergence(
         config,
@@ -48,6 +48,7 @@ def _cmd_poc001_fem(args: argparse.Namespace) -> int:
     versions = solver_versions(executables)
     payload = {
         "solver_versions": {"gmsh": versions.gmsh, "getdp": versions.getdp},
+        "finite_element_order": args.order,
         "convergence": [
             {"characteristic_length_m": p.characteristic_length_m, **p.metrics} for p in points
         ],
@@ -87,6 +88,13 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="+",
         default=[0.03, 0.02, 0.012],
         help="global mesh characteristic lengths in metres",
+    )
+    fem.add_argument(
+        "--order",
+        type=int,
+        choices=(1, 2),
+        default=2,
+        help="GetDP/Gmsh finite-element order used for the convergence study",
     )
     fem.set_defaults(func=_cmd_poc001_fem)
 
