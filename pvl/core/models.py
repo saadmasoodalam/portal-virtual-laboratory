@@ -59,6 +59,23 @@ class MeshConfig(FrozenModel):
     order: Literal[1, 2] = 1
 
 
+def _validate_coil_inside_domain(
+    coil: CoilConfig,
+    source_section: CoilSourceSectionConfig,
+    air: AirDomainConfig,
+    *,
+    label: str,
+) -> None:
+    half_radial = source_section.radial_thickness_m / 2
+    half_axial = source_section.axial_height_m / 2
+    if coil.radius_m - half_radial <= 0:
+        raise ValueError(f"{label} source section must remain away from the symmetry axis")
+    if air.radius_m <= coil.radius_m + half_radial:
+        raise ValueError(f"air domain radius must contain the complete {label} source section")
+    if air.half_height_m <= abs(coil.center_z_m) + half_axial:
+        raise ValueError(f"air domain must contain the complete {label} source section")
+
+
 class POC001Config(FrozenModel):
     name: str = "PVL-POC-001"
     coil: CoilConfig = CoilConfig(radius_m=0.05, turns=100, current_a=1.0)
@@ -71,16 +88,60 @@ class POC001Config(FrozenModel):
 
     @model_validator(mode="after")
     def validate_domain_contains_coil(self) -> "POC001Config":
+        _validate_coil_inside_domain(self.coil, self.source_section, self.air, label="coil")
         half_radial = self.source_section.radial_thickness_m / 2
-        half_axial = self.source_section.axial_height_m / 2
-        if self.coil.radius_m - half_radial <= 0:
-            raise ValueError("coil source section must remain away from the symmetry axis")
-        if self.air.radius_m <= self.coil.radius_m + half_radial:
-            raise ValueError("air domain radius must contain the complete coil source section")
-        if self.air.half_height_m <= abs(self.coil.center_z_m) + half_axial:
-            raise ValueError("air domain must contain the complete coil source section")
         if self.probe_radial_offset_m >= self.coil.radius_m - half_radial:
             raise ValueError("probe radial offset must lie inside the coil axis region")
         if any(abs(z) >= self.air.half_height_m for z in self.probe_z_m):
             raise ValueError("all probes must lie strictly inside the nominal air domain")
+        return self
+
+
+class POC002Config(FrozenModel):
+    """Two independently driven coaxial coils for the established-physics baseline."""
+
+    name: str = "PVL-POC-002"
+    coil_a: CoilConfig = CoilConfig(
+        radius_m=0.05,
+        turns=100,
+        current_a=1.0,
+        center_z_m=-0.025,
+        polarity=1,
+    )
+    coil_b: CoilConfig = CoilConfig(
+        radius_m=0.05,
+        turns=100,
+        current_a=1.0,
+        center_z_m=0.025,
+        polarity=1,
+    )
+    source_section: CoilSourceSectionConfig = CoilSourceSectionConfig()
+    air: AirDomainConfig = AirDomainConfig()
+    mesh: MeshConfig = MeshConfig()
+    probe_z_m: tuple[float, ...] = (-0.10, -0.05, -0.025, 0.0, 0.025, 0.05, 0.10)
+    probe_radial_offset_m: float = Field(default=1.0e-5, gt=0)
+    probe_samples: int = Field(default=321, ge=31)
+
+    @model_validator(mode="after")
+    def validate_dual_coil_geometry(self) -> "POC002Config":
+        _validate_coil_inside_domain(self.coil_a, self.source_section, self.air, label="coil A")
+        _validate_coil_inside_domain(self.coil_b, self.source_section, self.air, label="coil B")
+
+        half_radial = self.source_section.radial_thickness_m / 2
+        minimum_inner_radius = min(self.coil_a.radius_m, self.coil_b.radius_m) - half_radial
+        if self.probe_radial_offset_m >= minimum_inner_radius:
+            raise ValueError("probe radial offset must lie inside both coil radii")
+        if any(abs(z) >= self.air.half_height_m for z in self.probe_z_m):
+            raise ValueError("all probes must lie strictly inside the nominal air domain")
+
+        radial_overlap = (
+            abs(self.coil_a.radius_m - self.coil_b.radius_m)
+            < self.source_section.radial_thickness_m
+        )
+        axial_overlap = (
+            abs(self.coil_a.center_z_m - self.coil_b.center_z_m)
+            < self.source_section.axial_height_m
+        )
+        if radial_overlap and axial_overlap:
+            raise ValueError("coil A and coil B source sections must not overlap")
         return self

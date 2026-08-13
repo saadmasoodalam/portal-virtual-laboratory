@@ -30,16 +30,19 @@ jobs:
       - name: Test
         run: python -m pytest -ra
 
-      - name: Generate analytical POC artifact
+      - name: Generate analytical POC-001 artifact
         run: python -m pvl.cli.main poc001 --output results/poc001
 
-      - name: Run FEM mesh-convergence study
+      - name: Run single-coil POC-001 validation
         run: python -m pvl.cli.main poc001-fem --output results/poc001_fem
 
-      - name: Upload POC evidence
+      - name: Run independent dual-coil POC-002 validation
+        run: python -m pvl.cli.main poc002-fem --output results/poc002_fem
+
+      - name: Upload PVL validation evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pvl-poc001-evidence
+          name: pvl-validation-evidence
           path: results/
           if-no-files-found: warn
