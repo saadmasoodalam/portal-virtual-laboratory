@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 import json
+import math
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -27,6 +28,29 @@ class CoilConfig(FrozenModel):
     @property
     def signed_current_a(self) -> float:
         return self.current_a * self.polarity
+
+
+class HarmonicDriveConfig(FrozenModel):
+    """Single-frequency drive convention for one coil.
+
+    ``omega_sign`` records the sign of the temporal angular-frequency convention. For a real
+    scalar sinusoid, negative frequency is not a new energy state: it maps to the conjugate
+    phase representation at positive frequency. PVL preserves the sign explicitly so later
+    rotating-field geometries can distinguish temporal/spatial orientation without conflating
+    that convention with the static coil polarity.
+    """
+
+    frequency_hz: float = Field(default=100.0, gt=0)
+    phase_rad: float = 0.0
+    omega_sign: Literal[-1, 1] = 1
+
+    @property
+    def signed_angular_frequency_rad_s(self) -> float:
+        return self.omega_sign * 2.0 * math.pi * self.frequency_hz
+
+    @property
+    def canonical_positive_frequency_phase_rad(self) -> float:
+        return self.omega_sign * self.phase_rad
 
 
 class CoilSourceSectionConfig(FrozenModel):
@@ -74,6 +98,17 @@ def _validate_coil_inside_domain(
         raise ValueError(f"air domain radius must contain the complete {label} source section")
     if air.half_height_m <= abs(coil.center_z_m) + half_axial:
         raise ValueError(f"air domain must contain the complete {label} source section")
+
+
+def _validate_source_sections_do_not_overlap(
+    coil_a: CoilConfig,
+    coil_b: CoilConfig,
+    source_section: CoilSourceSectionConfig,
+) -> None:
+    radial_overlap = abs(coil_a.radius_m - coil_b.radius_m) < source_section.radial_thickness_m
+    axial_overlap = abs(coil_a.center_z_m - coil_b.center_z_m) < source_section.axial_height_m
+    if radial_overlap and axial_overlap:
+        raise ValueError("coil A and coil B source sections must not overlap")
 
 
 class POC001Config(FrozenModel):
@@ -134,14 +169,42 @@ class POC002Config(FrozenModel):
         if any(abs(z) >= self.air.half_height_m for z in self.probe_z_m):
             raise ValueError("all probes must lie strictly inside the nominal air domain")
 
-        radial_overlap = (
-            abs(self.coil_a.radius_m - self.coil_b.radius_m)
-            < self.source_section.radial_thickness_m
-        )
-        axial_overlap = (
-            abs(self.coil_a.center_z_m - self.coil_b.center_z_m)
-            < self.source_section.axial_height_m
-        )
-        if radial_overlap and axial_overlap:
-            raise ValueError("coil A and coil B source sections must not overlap")
+        _validate_source_sections_do_not_overlap(self.coil_a, self.coil_b, self.source_section)
+        return self
+
+
+class POC003Config(FrozenModel):
+    """Single-frequency phase/frequency-sign baseline for the validated coaxial coil pair."""
+
+    name: str = "PVL-POC-003"
+    coil_a: CoilConfig = CoilConfig(
+        radius_m=0.05,
+        turns=100,
+        current_a=1.0,
+        center_z_m=-0.025,
+        polarity=1,
+    )
+    coil_b: CoilConfig = CoilConfig(
+        radius_m=0.05,
+        turns=100,
+        current_a=1.0,
+        center_z_m=0.025,
+        polarity=1,
+    )
+    drive_a: HarmonicDriveConfig = HarmonicDriveConfig()
+    drive_b: HarmonicDriveConfig = HarmonicDriveConfig()
+    source_section: CoilSourceSectionConfig = CoilSourceSectionConfig()
+    probe_z_m: tuple[float, ...] = (-0.10, -0.05, -0.025, 0.0, 0.025, 0.05, 0.10)
+    samples_per_cycle: int = Field(default=128, ge=16)
+
+    @model_validator(mode="after")
+    def validate_harmonic_pair(self) -> "POC003Config":
+        _validate_source_sections_do_not_overlap(self.coil_a, self.coil_b, self.source_section)
+        if not math.isclose(
+            self.drive_a.frequency_hz,
+            self.drive_b.frequency_hz,
+            rel_tol=1e-12,
+            abs_tol=0.0,
+        ):
+            raise ValueError("POC-003 requires equal frequency magnitudes for coherent phasor comparison")
         return self
