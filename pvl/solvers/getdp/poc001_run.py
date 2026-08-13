@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from pvl.core.models import MeshConfig, POC001Config
+from pvl.core.physics import relative_error
 from pvl.geometry.poc001 import write_axisymmetric_gmsh_geo
 from pvl.solvers.getdp.poc001 import write_magnetostatic_pro
 from pvl.solvers.getdp.runner import (
@@ -16,7 +17,11 @@ from pvl.solvers.getdp.runner import (
     run_getdp,
     solver_versions,
 )
-from pvl.validation.poc001 import analytical_reference, compare_fem_to_analytic
+from pvl.validation.poc001 import (
+    analytical_reference,
+    compare_fem_to_analytic,
+    finite_source_reference,
+)
 
 
 @dataclass(frozen=True)
@@ -109,21 +114,34 @@ def run_axisymmetric_poc001(
     raw_y, raw_by = parse_getdp_axis_table(axis_file)
     target_z = np.asarray(config.probe_z_m, dtype=float)
     fem_by = np.interp(target_z, raw_y, raw_by)
-    reference = analytical_reference(config)
-    metrics = compare_fem_to_analytic(reference, fem_by)
+
+    # Match the numerical source exactly: the FEM uses a finite rectangular winding
+    # section. The textbook filament result remains an independent secondary oracle.
+    finite_reference = finite_source_reference(config)
+    filament_reference = analytical_reference(config)
+    metrics = compare_fem_to_analytic(finite_reference, fem_by)
+    source_model_errors = relative_error(filament_reference.b_t, finite_reference.b_t)
 
     versions = solver_versions(exe)
     summary = {
         "experiment": config.model_dump(mode="json"),
         "configuration_hash": config.configuration_hash(),
         "solver_versions": {"gmsh": versions.gmsh, "getdp": versions.getdp},
+        "reference_model": "finite rectangular winding section",
+        "filament_vs_finite_source": {
+            "max_relative_difference": float(np.max(source_model_errors)),
+            "mean_relative_difference": float(np.mean(source_model_errors)),
+        },
         "probe_results": [
             {
                 "z_m": float(z),
                 "fem_b_axis_t": float(fem),
-                "analytic_b_axis_t": float(analytic),
+                "finite_source_b_axis_t": float(finite),
+                "filament_b_axis_t": float(filament),
             }
-            for z, fem, analytic in zip(target_z, fem_by, reference.b_t)
+            for z, fem, finite, filament in zip(
+                target_z, fem_by, finite_reference.b_t, filament_reference.b_t
+            )
         ],
         "metrics": metrics,
     }
