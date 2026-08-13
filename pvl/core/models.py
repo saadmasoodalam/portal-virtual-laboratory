@@ -11,7 +11,7 @@ class FrozenModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     def canonical_json(self) -> str:
-        return json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+        return json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ","))
 
     def configuration_hash(self) -> str:
         return sha256(self.canonical_json().encode("utf-8")).hexdigest()
@@ -43,6 +43,15 @@ class CoilSourceSectionConfig(FrozenModel):
 class AirDomainConfig(FrozenModel):
     radius_m: float = Field(default=0.30, gt=0)
     half_height_m: float = Field(default=0.30, gt=0)
+    fem_extent_multiplier: float = Field(default=2.0, ge=1.0)
+
+    @property
+    def fem_radius_m(self) -> float:
+        return self.radius_m * self.fem_extent_multiplier
+
+    @property
+    def fem_half_height_m(self) -> float:
+        return self.half_height_m * self.fem_extent_multiplier
 
 
 class MeshConfig(FrozenModel):
@@ -73,5 +82,5 @@ class POC001Config(FrozenModel):
         if self.probe_radial_offset_m >= self.coil.radius_m - half_radial:
             raise ValueError("probe radial offset must lie inside the coil axis region")
         if any(abs(z) >= self.air.half_height_m for z in self.probe_z_m):
-            raise ValueError("all probes must lie strictly inside the air domain")
+            raise ValueError("all probes must lie strictly inside the nominal air domain")
         return self
