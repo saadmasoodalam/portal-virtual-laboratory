@@ -29,6 +29,7 @@ class GeometryComponent(BaseModel):
 class RigGeometryManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     rig_id: str
+    source_rig_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     convention: str = "right_handed_xyz_si_m"
     components: tuple[GeometryComponent, ...]
 
