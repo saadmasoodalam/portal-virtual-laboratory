@@ -42,6 +42,9 @@ jobs:
       - name: Run phase and signed-frequency POC-003 validation
         run: python -m pvl.cli.main poc003-phase --output results/poc003_phase
 
+      - name: Run eddy-current slab POC-004 validation
+        run: python -m pvl.cli.main poc004-eddy --output results/poc004_eddy
+
       - name: Upload PVL validation evidence
         if: always()
         uses: actions/upload-artifact@v4
