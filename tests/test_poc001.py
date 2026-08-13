@@ -8,7 +8,11 @@ from pvl.core.physics import MU0, circular_coil_on_axis_b_t
 from pvl.geometry.poc001 import render_axisymmetric_gmsh_geo, render_gmsh_geo
 from pvl.solvers.getdp.poc001 import render_magnetostatic_pro
 from pvl.solvers.getdp.poc001_run import parse_getdp_axis_table
-from pvl.validation.poc001 import analytical_reference, compare_fem_to_analytic
+from pvl.validation.poc001 import (
+    analytical_reference,
+    compare_fem_to_analytic,
+    finite_source_reference,
+)
 
 
 def test_center_field_matches_closed_form():
@@ -24,6 +28,16 @@ def test_field_is_symmetric_about_coil_plane():
     z = np.array([-0.1, -0.05, 0.05, 0.1])
     b = circular_coil_on_axis_b_t(z, radius_m=0.05, turns=100, current_a=1.0)
     assert np.allclose(b[:2], b[:1:-1])
+
+
+def test_finite_winding_reference_is_symmetric_and_close_to_filament_oracle():
+    config = POC001Config()
+    finite = finite_source_reference(config, quadrature_order=32)
+    filament = analytical_reference(config)
+    assert np.allclose(finite.b_t[:2], finite.b_t[:1:-1], rtol=1e-12, atol=0.0)
+    # The POC source is only 2 mm x 2 mm around a 50 mm mean radius, so its
+    # finite-section correction should be much smaller than the FEM validation gate.
+    assert np.max(np.abs(finite.b_t / filament.b_t - 1.0)) < 2e-4
 
 
 def test_hash_is_deterministic_and_sensitive():
