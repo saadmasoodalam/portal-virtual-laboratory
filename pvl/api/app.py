@@ -36,6 +36,11 @@ def create_app(materials: MaterialLibrary | None = None) -> FastAPI:
             "solver_execution": False,
         }
 
+    @application.get("/api/v1/rig/template", response_model=RigV1Schema)
+    def rig_template() -> RigV1Schema:
+        """Return the canonical empty Rig v1 manifest without inventing dimensions."""
+        return RigV1Schema()
+
     @application.post("/api/v1/rig/preview", response_model=PreviewResponse)
     def rig_preview(rig: RigV1Schema) -> PreviewResponse:
         readiness = rig.readiness_report()
