@@ -12,6 +12,7 @@ from pvl.solvers.getdp.runner import (
     generate_mesh,
     solver_versions,
 )
+from pvl.validation.poc001 import analytical_reference
 
 
 def _solver_stack_or_skip():
@@ -46,11 +47,20 @@ def test_poc001_getdp_magnetostatic_solve_produces_physical_axis_field(tmp_path:
     exe = _solver_stack_or_skip()
     config = POC001Config(mesh=MeshConfig(characteristic_length_m=0.025, order=1))
     result = run_axisymmetric_poc001(config, tmp_path / "fem", executables=exe)
+    reference = analytical_reference(config)
 
     assert result.mesh_file.exists()
     assert result.raw_axis_file.exists()
     assert np.all(np.isfinite(result.b_axis_t))
     assert np.all(result.b_axis_t > 0.0)
-    # Initial integration gate. The dedicated convergence gate is tightened after the
-    # solver/geometry combination has demonstrated reproducible convergence in CI.
+
+    # Keep detailed diagnostics in CI until the analytical-validation gate passes.
+    print("PVL-POC-001 probe z [m]:", result.z_m)
+    print("PVL-POC-001 FEM B_axis [T]:", result.b_axis_t)
+    print("PVL-POC-001 analytic B_axis [T]:", reference.b_t)
+    print("PVL-POC-001 ratio FEM/analytic:", result.b_axis_t / reference.b_t)
+    print("PVL-POC-001 metrics:", result.metrics)
+    print("PVL-POC-001 raw table head:\n", result.raw_axis_file.read_text(encoding="utf-8", errors="ignore")[:3000])
+
+    # Initial integration gate. Do not relax this threshold to hide scaling/formulation errors.
     assert result.metrics["max_relative_error"] < 0.20
