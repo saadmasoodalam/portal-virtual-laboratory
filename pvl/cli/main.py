@@ -4,12 +4,13 @@ import argparse
 import json
 from pathlib import Path
 
-from pvl.core.models import MeshConfig, POC001Config, POC002Config
+from pvl.core.models import MeshConfig, POC001Config, POC002Config, POC003Config
 from pvl.geometry.poc001 import write_gmsh_geo
 from pvl.solvers.getdp.poc001_run import evaluate_poc001_gate, run_mesh_convergence
 from pvl.solvers.getdp.poc002_run import evaluate_poc002_gate, run_dual_mesh_convergence
 from pvl.solvers.getdp.runner import SolverUnavailableError, discover_executables, solver_versions
 from pvl.validation.poc001 import analytical_reference
+from pvl.validation.poc003 import dual_coil_phasor_reference, evaluate_poc003_gate
 
 
 def _cmd_poc001(args: argparse.Namespace) -> int:
@@ -121,6 +122,43 @@ def _cmd_poc002_fem(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_poc003_phase(args: argparse.Namespace) -> int:
+    config = POC003Config()
+    output = Path(args.output)
+    output.mkdir(parents=True, exist_ok=True)
+    reference = dual_coil_phasor_reference(config)
+    gate = evaluate_poc003_gate()
+    payload = {
+        "experiment": config.model_dump(mode="json"),
+        "configuration_hash": config.configuration_hash(),
+        "baseline_phasor": [
+            {
+                "z_m": float(z),
+                "real_t": float(value.real),
+                "imag_t": float(value.imag),
+                "peak_amplitude_t": float(abs(value)),
+            }
+            for z, value in zip(reference.z_m, reference.b_phasor_t)
+        ],
+        "validation_gate": gate.as_dict(),
+        "established_physics_note": (
+            "For scalar sinusoidal currents in the retained coaxial air-only geometry, the sign "
+            "of omega is a frequency/phase representation convention, not by itself a distinct "
+            "rotating magnetic-field state. A genuinely rotating field requires spatially "
+            "non-collinear field components or another directional degree of freedom."
+        ),
+    }
+    (output / "poc003_phase_gate.json").write_text(
+        json.dumps(payload, indent=2), encoding="utf-8"
+    )
+    print(json.dumps(payload, indent=2))
+    if not gate.passed:
+        print("PVL-POC-003 phase/frequency-sign validation gate: FAILED")
+        return 5
+    print("PVL-POC-003 phase/frequency-sign validation gate: PASSED")
+    return 0
+
+
 def _cmd_doctor(_: argparse.Namespace) -> int:
     try:
         executables = discover_executables()
@@ -173,6 +211,13 @@ def build_parser() -> argparse.ArgumentParser:
     dual.add_argument("--output", default="results/poc002_fem")
     _add_mesh_arguments(dual)
     dual.set_defaults(func=_cmd_poc002_fem)
+
+    phase = sub.add_parser(
+        "poc003-phase",
+        help="validate dual-coil phase and signed-frequency conventions",
+    )
+    phase.add_argument("--output", default="results/poc003_phase")
+    phase.set_defaults(func=_cmd_poc003_phase)
 
     doctor = sub.add_parser("doctor", help="check external FEM executables")
     doctor.set_defaults(func=_cmd_doctor)
