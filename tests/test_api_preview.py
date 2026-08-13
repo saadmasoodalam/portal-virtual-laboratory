@@ -40,6 +40,17 @@ def test_health_scope():
     assert response.json()["solver_execution"] is False
 
 
+def test_template_contains_unknown_measurements_without_values():
+    response = TestClient(create_app()).get("/api/v1/rig/template")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["rig_id"] == "portal_boundary_physics_rig_v1"
+    assert payload["frame"]["outer_width"]["status"] == "unknown"
+    assert payload["frame"]["outer_width"]["value_m"] is None
+    assert payload["coil_a"]["turns"]["status"] == "unknown"
+    assert payload["coil_a"]["turns"]["value"] is None
+
+
 def test_incomplete_rig_is_rejected():
     response = TestClient(create_app()).post(
         "/api/v1/rig/preview", json=RigV1Schema().model_dump(mode="json")
