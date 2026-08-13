@@ -81,6 +81,13 @@ def test_refined_mesh_sizes_scale_with_global_characteristic_length():
     assert "hProbe = 0.00060000000000000006;" in fine
 
 
+def test_second_order_solution_keeps_first_order_geometric_elements():
+    config = POC001Config(mesh=MeshConfig(characteristic_length_m=0.02, order=2))
+    text = render_axisymmetric_gmsh_geo(config)
+    assert "Mesh.ElementOrder = 1;" in text
+    assert "Mesh.ElementOrder = 2;" not in text
+
+
 def test_getdp_model_is_axisymmetric_established_physics_only():
     text = render_magnetostatic_pro(POC001Config())
     assert "Jacobian VolAxiSqu" in text
