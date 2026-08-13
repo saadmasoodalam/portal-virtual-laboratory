@@ -1,11 +1,16 @@
 import math
+from pathlib import Path
 
 import numpy as np
 
 from pvl.core.poc004_models import POC004Config
 from pvl.geometry.poc004 import render_gmsh_geo
 from pvl.solvers.getdp.poc004 import render_magnetoquasistatic_pro
-from pvl.solvers.getdp.poc004_run import SlabConvergencePoint, evaluate_poc004_gate
+from pvl.solvers.getdp.poc004_run import (
+    SlabConvergencePoint,
+    evaluate_poc004_gate,
+    parse_getdp_scalar_line_table,
+)
 from pvl.validation.poc004 import (
     analytical_slab_reference,
     average_joule_power_density_w_m3,
@@ -67,6 +72,21 @@ def test_poc004_getdp_contains_complex_conductivity_dynamics():
     assert "Re[CompZ[{a}]]" in text
     assert "Im[CompZ[{a}]]" in text
     assert "-sigma[] * CompZ[Dt[{a}]]" in text
+
+
+def test_complex_system_scalar_table_parser_uses_penultimate_value_column(tmp_path: Path):
+    path = tmp_path / "scalar.txt"
+    # GetDP 3.2 Format Table for an explicitly real PostProcessing scalar in a
+    # complex system ends with value_real value_imag. The residual imaginary
+    # component is zero; the requested scalar is therefore the penultimate column.
+    path.write_text(
+        "15 876 0 0 0 0 0 0 0.0001 0\n"
+        "15 12 0.002 0 0 0.002 0 0 -3.25e-5 0\n",
+        encoding="utf-8",
+    )
+    x, value = parse_getdp_scalar_line_table(path)
+    assert np.allclose(x, [0.0, 0.002])
+    assert np.allclose(value, [0.0001, -3.25e-5])
 
 
 def _point(h: float, nodes: int, elements: int, scale: float = 1.0) -> SlabConvergencePoint:
