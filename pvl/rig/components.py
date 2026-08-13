@@ -4,14 +4,14 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from pvl.rig.measurements import CountMeasurement, LengthMeasurement
+from pvl.rig.measurements import CoordinateMeasurement, CountMeasurement, LengthMeasurement
 
 
 class Position3D(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    x: LengthMeasurement = Field(default_factory=LengthMeasurement)
-    y: LengthMeasurement = Field(default_factory=LengthMeasurement)
-    z: LengthMeasurement = Field(default_factory=LengthMeasurement)
+    x: CoordinateMeasurement = Field(default_factory=CoordinateMeasurement)
+    y: CoordinateMeasurement = Field(default_factory=CoordinateMeasurement)
+    z: CoordinateMeasurement = Field(default_factory=CoordinateMeasurement)
 
 
 class Direction3D(BaseModel):
