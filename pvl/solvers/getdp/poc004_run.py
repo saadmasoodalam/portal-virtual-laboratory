@@ -69,7 +69,14 @@ class POC004GateResult:
 
 
 def parse_getdp_scalar_line_table(path: Path) -> tuple[np.ndarray, np.ndarray]:
-    """Parse x and a real scalar from GetDP's ``Format Table`` line output."""
+    """Parse x and a real scalar from GetDP ``Format Table`` output.
+
+    In a complex GetDP system, even an explicitly real-valued PostProcessing quantity such as
+    ``Re[CompZ[{a}]]`` is serialized by ``Format Table`` as a complex scalar pair. The final
+    two columns are therefore ``value_real value_imag``. Since POC-004 writes the real and
+    imaginary parts into separate files, the requested scalar is the penultimate column; the
+    final column is the residual zero imaginary component of that already-real quantity.
+    """
     x_values: list[float] = []
     field_values: list[float] = []
     for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
@@ -80,10 +87,10 @@ def parse_getdp_scalar_line_table(path: Path) -> tuple[np.ndarray, np.ndarray]:
             values = [float(token) for token in line.replace(",", " ").split()]
         except ValueError:
             continue
-        if len(values) < 5:
+        if len(values) < 6:
             continue
         x_values.append(values[2])
-        field_values.append(values[-1])
+        field_values.append(values[-2])
     if not x_values:
         raise ValueError(f"No scalar line samples found in GetDP table: {path}")
     x = np.asarray(x_values, dtype=float)
