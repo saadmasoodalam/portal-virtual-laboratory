@@ -8,8 +8,13 @@ from pvl.core.models import POC001Config
 def render_magnetostatic_pro(config: POC001Config) -> str:
     """Render a self-contained GetDP axisymmetric magnetostatic problem.
 
-    The formulation follows GetDP's documented 2D magnetic-vector-potential approach. The
-    axisymmetric ``VolAxi`` Jacobian maps the 2D x-y section into the corresponding solid of
+    The formulation follows GetDP's documented 2D magnetic-vector-potential approach. For
+    ``Form1P``/``BF_PerpendicularEdge`` in an axisymmetric model, GetDP's own magnetics
+    template uses the second axisymmetric volume Jacobian, ``VolAxiSqu``. This distinction is
+    essential: using ``VolAxi`` applies the wrong geometrical scaling to the vector-potential
+    formulation and produces a non-physical field amplitude.
+
+    The axisymmetric Jacobian maps the 2D x-y section into the corresponding solid of
     revolution around the y-axis. No Portal Hypothesis terms enter this formulation.
     """
     c = config.coil
@@ -21,6 +26,7 @@ def render_magnetostatic_pro(config: POC001Config) -> str:
     return f'''// PVL-POC-001 GetDP magnetostatic model.
 // Established physics only: curl(nu curl a) = js.
 // Axisymmetric convention: model lies in z=0 plane, rotation axis is y.
+// Form1P axisymmetric magnetics requires the VolAxiSqu Jacobian.
 
 Group {{
   Air = Region[1];
@@ -36,6 +42,7 @@ Group {{
 Function {{
   mu0 = 4.e-7 * Pi;
   nu[Region[{{Air, Coil}}]] = 1. / mu0;
+  // Homogenized winding current density: J = N I / winding cross-section.
   // Negative z source gives +y axial field for positive signed coil current.
   js[Coil] = Vector[0., 0., {current_density:.17g}];
 }}
@@ -63,7 +70,7 @@ FunctionSpace {{
 Jacobian {{
   {{ Name Vol;
     Case {{
-      {{ Region All; Jacobian VolAxi; }}
+      {{ Region All; Jacobian VolAxiSqu; }}
     }}
   }}
 }}
