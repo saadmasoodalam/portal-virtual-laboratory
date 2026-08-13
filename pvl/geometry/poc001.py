@@ -39,25 +39,37 @@ def render_axisymmetric_gmsh_geo(config: POC001Config) -> str:
     rotation axis. The x coordinate therefore represents cylindrical radius and y represents
     the physical coil-axis coordinate. A rectangular source section centred at x=Rcoil is
     revolved conceptually around the y-axis by the axisymmetric formulation.
+
+    The far-field boundary is deliberately expanded beyond the nominal smoke-test domain, and
+    every convergence level scales the source and probe-corridor mesh sizes together. This
+    avoids the earlier pseudo-convergence case where only the remote air mesh was refined while
+    the winding-source mesh stayed clamped at a fixed size.
     """
     c = config.coil
     a = config.air
     s = config.source_section
     h_far = config.mesh.characteristic_length_m
-    h_coil = min(h_far / 4.0, s.radial_thickness_m / 2.0, s.axial_height_m / 2.0)
+    h_coil = min(h_far / 30.0, s.radial_thickness_m / 2.0, s.axial_height_m / 2.0)
+    h_probe = h_far / 20.0
+    r_air = a.fem_radius_m
+    h_air = a.fem_half_height_m
     r0 = c.radius_m - s.radial_thickness_m / 2.0
     r1 = c.radius_m + s.radial_thickness_m / 2.0
     y0 = c.center_z_m - s.axial_height_m / 2.0
     y1 = c.center_z_m + s.axial_height_m / 2.0
+    probe_y0 = min(config.probe_z_m) - 2.0 * h_far
+    probe_y1 = max(config.probe_z_m) + 2.0 * h_far
+    probe_rmax = min(c.radius_m * 0.20, 0.01)
 
     return f'''// PVL-POC-001 axisymmetric magnetostatic geometry. SI units: metres.
 // x = cylindrical radius; y = physical coil-axis coordinate; rotation axis = y.
-Rair = {a.radius_m:.17g};
-Hair = {a.half_height_m:.17g};
+Rair = {r_air:.17g};
+Hair = {h_air:.17g};
 hFar = {h_far:.17g};
 hCoil = {h_coil:.17g};
+hProbe = {h_probe:.17g};
 
-// Outer air domain.
+// Expanded outer air domain reduces artificial Dirichlet-boundary influence.
 Point(1) = {{0, -Hair, 0, hFar}};
 Point(2) = {{Rair, -Hair, 0, hFar}};
 Point(3) = {{Rair, Hair, 0, hFar}};
@@ -68,7 +80,7 @@ Line(3) = {{3, 4}};
 Line(4) = {{4, 1}};
 Curve Loop(20) = {{1, 2, 3, 4}};
 
-// Small finite cross-section approximating a filamentary circular coil.
+// Finite cross-section representing the homogenized circular winding.
 Point(10) = {{{r0:.17g}, {y0:.17g}, 0, hCoil}};
 Point(11) = {{{r1:.17g}, {y0:.17g}, 0, hCoil}};
 Point(12) = {{{r1:.17g}, {y1:.17g}, 0, hCoil}};
@@ -88,6 +100,20 @@ Physical Surface("Coil", 2) = {{31}};
 Physical Curve("Boundary", 10) = {{1, 2, 3, 4}};
 Physical Curve("Axis", 11) = {{4}};
 
+// Pointwise B from a first-order A formulation is piecewise constant inside each
+// triangle. Refine a narrow corridor around the symmetry axis so probe extraction
+// converges with the rest of the mesh instead of jumping between large triangles.
+Field[1] = Box;
+Field[1].VIn = hProbe;
+Field[1].VOut = hFar;
+Field[1].XMin = 0;
+Field[1].XMax = {probe_rmax:.17g};
+Field[1].YMin = {probe_y0:.17g};
+Field[1].YMax = {probe_y1:.17g};
+Field[1].Thickness = hFar;
+Background Field = 1;
+
+Mesh.MeshSizeFromPoints = 1;
 Mesh.ElementOrder = {config.mesh.order};
 Mesh.MshFileVersion = 2.2;
 '''
