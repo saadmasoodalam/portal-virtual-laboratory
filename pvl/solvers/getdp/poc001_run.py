@@ -31,12 +31,17 @@ class FEMAxisResult:
     raw_axis_file: Path
     mesh_file: Path
     metrics: dict[str, float]
+    node_count: int
+    element_count: int
 
 
 @dataclass(frozen=True)
 class ConvergencePoint:
     characteristic_length_m: float
     metrics: dict[str, float]
+    b_axis_t: tuple[float, ...]
+    node_count: int
+    element_count: int
 
 
 def parse_getdp_axis_table(path: Path) -> tuple[np.ndarray, np.ndarray]:
@@ -72,6 +77,26 @@ def parse_getdp_axis_table(path: Path) -> tuple[np.ndarray, np.ndarray]:
     return y[order], by[order]
 
 
+def parse_msh2_counts(path: Path) -> tuple[int, int]:
+    """Return node and element counts from an ASCII Gmsh MSH 2.x file."""
+    lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    try:
+        node_marker = lines.index("$Nodes")
+        element_marker = lines.index("$Elements")
+        return int(lines[node_marker + 1]), int(lines[element_marker + 1])
+    except (ValueError, IndexError) as exc:
+        raise ValueError(f"Could not read MSH2 entity counts from {path}") from exc
+
+
+def _symmetry_error(z_m: np.ndarray, field: np.ndarray) -> float | None:
+    if z_m.size < 2 or not np.allclose(z_m, -z_m[::-1], rtol=0.0, atol=1e-14):
+        return None
+    left = field
+    right = field[::-1]
+    scale = np.maximum((np.abs(left) + np.abs(right)) / 2.0, np.finfo(float).tiny)
+    return float(np.max(np.abs(left - right) / scale))
+
+
 def run_axisymmetric_poc001(
     config: POC001Config,
     output_dir: Path,
@@ -90,6 +115,7 @@ def run_axisymmetric_poc001(
         output_path=output_dir / "poc001_axi.msh",
         executables=exe,
     )
+    node_count, element_count = parse_msh2_counts(mesh)
     run = run_getdp(
         pro,
         mesh,
@@ -120,6 +146,9 @@ def run_axisymmetric_poc001(
     finite_reference = finite_source_reference(config)
     filament_reference = analytical_reference(config)
     metrics = compare_fem_to_analytic(finite_reference, fem_by)
+    symmetry = _symmetry_error(target_z, fem_by)
+    if symmetry is not None:
+        metrics["symmetry_max_relative_difference"] = symmetry
     source_model_errors = relative_error(filament_reference.b_t, finite_reference.b_t)
 
     versions = solver_versions(exe)
@@ -127,6 +156,7 @@ def run_axisymmetric_poc001(
         "experiment": config.model_dump(mode="json"),
         "configuration_hash": config.configuration_hash(),
         "solver_versions": {"gmsh": versions.gmsh, "getdp": versions.getdp},
+        "mesh": {"nodes": node_count, "elements": element_count},
         "reference_model": "finite rectangular winding section",
         "filament_vs_finite_source": {
             "max_relative_difference": float(np.max(source_model_errors)),
@@ -153,6 +183,8 @@ def run_axisymmetric_poc001(
         raw_axis_file=axis_file,
         mesh_file=mesh,
         metrics=metrics,
+        node_count=node_count,
+        element_count=element_count,
     )
 
 
@@ -164,6 +196,11 @@ def run_mesh_convergence(
     executables: ExecutableSet | None = None,
 ) -> list[ConvergencePoint]:
     """Run the same physical case at successively finer global mesh sizes."""
+    if len(characteristic_lengths_m) < 2:
+        raise ValueError("mesh convergence requires at least two mesh sizes")
+    if any(a <= b for a, b in zip(characteristic_lengths_m, characteristic_lengths_m[1:])):
+        raise ValueError("mesh sizes must be strictly descending from coarse to fine")
+
     exe = executables or discover_executables()
     points: list[ConvergencePoint] = []
     for index, h in enumerate(characteristic_lengths_m, start=1):
@@ -171,12 +208,35 @@ def run_mesh_convergence(
             update={"mesh": MeshConfig(characteristic_length_m=h, order=base_config.mesh.order)}
         )
         result = run_axisymmetric_poc001(config, output_dir / f"mesh_{index:02d}", executables=exe)
-        points.append(ConvergencePoint(characteristic_length_m=h, metrics=result.metrics))
+        points.append(
+            ConvergencePoint(
+                characteristic_length_m=h,
+                metrics=result.metrics,
+                b_axis_t=tuple(float(value) for value in result.b_axis_t),
+                node_count=result.node_count,
+                element_count=result.element_count,
+            )
+        )
 
-    payload = [
-        {"characteristic_length_m": point.characteristic_length_m, **point.metrics}
-        for point in points
-    ]
+    payload = []
+    previous: np.ndarray | None = None
+    for point in points:
+        field = np.asarray(point.b_axis_t, dtype=float)
+        change = None
+        if previous is not None:
+            denominator = np.maximum(np.abs(previous), np.finfo(float).tiny)
+            change = float(np.max(np.abs(field - previous) / denominator))
+        payload.append(
+            {
+                "characteristic_length_m": point.characteristic_length_m,
+                "nodes": point.node_count,
+                "elements": point.element_count,
+                "successive_max_relative_field_change": change,
+                **point.metrics,
+            }
+        )
+        previous = field
+
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "convergence.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return points
