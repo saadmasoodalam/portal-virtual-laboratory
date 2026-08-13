@@ -22,6 +22,14 @@ class SampleMedium(StrEnum):
     DISTILLED_WATER = "distilled_water"
     SALINE_0P9 = "saline_0p9"
 
+    @property
+    def material_id(self) -> str:
+        return {
+            SampleMedium.AIR: "air_baseline",
+            SampleMedium.DISTILLED_WATER: "distilled_water_baseline",
+            SampleMedium.SALINE_0P9: "saline_0p9_baseline",
+        }[self]
+
 
 class BoundaryCircuitState(StrEnum):
     OPEN = "open"
@@ -58,13 +66,19 @@ class CoilDriveState(FrozenModel):
     @model_validator(mode="after")
     def validate_drive(self) -> "CoilDriveState":
         if self.mode == DriveMode.OFF:
-            if self.current_a != 0.0 or self.frequency_hz is not None or self.phase_rad != 0.0:
-                raise ValueError("OFF drive requires zero current, no frequency, and zero phase")
+            if (
+                self.current_a != 0.0
+                or self.frequency_hz is not None
+                or self.phase_rad != 0.0
+                or self.polarity != 1
+                or self.omega_sign != 1
+            ):
+                raise ValueError("OFF drive must use canonical zero-state parameters")
         elif self.mode == DriveMode.DC:
             if self.current_a <= 0.0:
                 raise ValueError("DC drive requires positive current magnitude")
-            if self.frequency_hz is not None or self.phase_rad != 0.0:
-                raise ValueError("DC drive must not define frequency or phase")
+            if self.frequency_hz is not None or self.phase_rad != 0.0 or self.omega_sign != 1:
+                raise ValueError("DC drive must not define harmonic frequency-sign state")
         else:
             if self.current_a <= 0.0 or self.frequency_hz is None:
                 raise ValueError("harmonic drive requires positive current and frequency")
@@ -105,8 +119,8 @@ class ExperimentConfig(FrozenModel):
     repetitions: int = Field(default=3, ge=1)
     randomization_seed: int = Field(default=0, ge=0)
     solver_fidelity: SolverFidelity = SolverFidelity.EXPLORATORY
-    material_library_fingerprint: str = Field(min_length=64, max_length=64)
-    rig_definition_fingerprint: str = Field(min_length=64, max_length=64)
+    material_library_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    rig_definition_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     biological_testing: Literal[False] = False
     notes: str = ""
 
@@ -134,10 +148,10 @@ class RunManifest(FrozenModel):
     experiment_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
     repetition_index: int = Field(ge=1)
     randomized_sequence_index: int = Field(ge=0)
-    planned_configuration_hash: str = Field(min_length=64, max_length=64)
-    physics_state_hash: str = Field(min_length=64, max_length=64)
-    rig_definition_fingerprint: str = Field(min_length=64, max_length=64)
-    material_library_fingerprint: str = Field(min_length=64, max_length=64)
+    planned_configuration_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    physics_state_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    rig_definition_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    material_library_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     created_utc: datetime
     status: RunStatus = RunStatus.PLANNED
     solver_versions: dict[str, str] = Field(default_factory=dict)
