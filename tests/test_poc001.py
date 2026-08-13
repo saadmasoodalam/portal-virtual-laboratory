@@ -3,7 +3,7 @@ from pathlib import Path
 
 import numpy as np
 
-from pvl.core.models import POC001Config
+from pvl.core.models import MeshConfig, POC001Config
 from pvl.core.physics import MU0, circular_coil_on_axis_b_t
 from pvl.geometry.poc001 import render_axisymmetric_gmsh_geo, render_gmsh_geo
 from pvl.solvers.getdp.poc001 import render_magnetostatic_pro
@@ -51,10 +51,19 @@ def test_axisymmetric_geo_has_conformal_air_coil_regions():
 
 def test_getdp_model_is_axisymmetric_established_physics_only():
     text = render_magnetostatic_pro(POC001Config())
-    assert "Jacobian VolAxi" in text
+    assert "Jacobian VolAxiSqu" in text
     assert "Magnetostatics_a_2D" in text
     assert "curl(nu curl a) = js" in text
     assert "Portal Hypothesis" not in text
+
+
+def test_second_order_getdp_model_adds_edge_basis_and_constraint():
+    config = POC001Config(mesh=MeshConfig(characteristic_length_m=0.02, order=2))
+    text = render_magnetostatic_pro(config)
+    assert "BF_PerpendicularEdge_2E" in text
+    assert "Entity EdgesOf[All]" in text
+    assert "Name a0_Mag_2D" in text
+    assert "GeoElement Triangle; NumberOfPoints 6" in text
 
 
 def test_getdp_table_parser_extracts_y_and_by(tmp_path: Path):
