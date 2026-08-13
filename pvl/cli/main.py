@@ -5,12 +5,15 @@ import json
 from pathlib import Path
 
 from pvl.core.models import MeshConfig, POC001Config, POC002Config, POC003Config
+from pvl.core.poc004_models import POC004Config
 from pvl.geometry.poc001 import write_gmsh_geo
 from pvl.solvers.getdp.poc001_run import evaluate_poc001_gate, run_mesh_convergence
 from pvl.solvers.getdp.poc002_run import evaluate_poc002_gate, run_dual_mesh_convergence
+from pvl.solvers.getdp.poc004_run import evaluate_poc004_gate, run_slab_mesh_convergence
 from pvl.solvers.getdp.runner import SolverUnavailableError, discover_executables, solver_versions
 from pvl.validation.poc001 import analytical_reference
 from pvl.validation.poc003 import dual_coil_phasor_reference, evaluate_poc003_gate
+from pvl.validation.poc004 import skin_depth_m
 
 
 def _cmd_poc001(args: argparse.Namespace) -> int:
@@ -159,6 +162,50 @@ def _cmd_poc003_phase(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_poc004_eddy(args: argparse.Namespace) -> int:
+    try:
+        executables = discover_executables()
+    except SolverUnavailableError as exc:
+        print(f"PVL FEM status: NOT READY — {exc}")
+        return 2
+
+    config = POC004Config(
+        frequency_hz=args.frequency,
+        conductivity_s_m=args.conductivity,
+        relative_permeability=args.relative_permeability,
+        mesh=MeshConfig(characteristic_length_m=args.mesh_sizes[0], order=args.order),
+    )
+    output = Path(args.output)
+    points = run_slab_mesh_convergence(
+        config,
+        output,
+        characteristic_lengths_m=tuple(args.mesh_sizes),
+        executables=executables,
+    )
+    gate = evaluate_poc004_gate(points)
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "validation_gate.json").write_text(
+        json.dumps(gate.as_dict(), indent=2), encoding="utf-8"
+    )
+    versions = solver_versions(executables)
+    payload = {
+        "solver_versions": {"gmsh": versions.gmsh, "getdp": versions.getdp},
+        "finite_element_order": args.order,
+        "frequency_hz": config.frequency_hz,
+        "conductivity_s_m": config.conductivity_s_m,
+        "relative_permeability": config.relative_permeability,
+        "skin_depth_m": skin_depth_m(config),
+        "finest_metrics": points[-1].metrics,
+        "validation_gate": gate.as_dict(),
+    }
+    print(json.dumps(payload, indent=2))
+    if not gate.passed:
+        print("PVL-POC-004 eddy-current slab validation gate: FAILED")
+        return 6
+    print("PVL-POC-004 eddy-current slab validation gate: PASSED")
+    return 0
+
+
 def _cmd_doctor(_: argparse.Namespace) -> int:
     try:
         executables = discover_executables()
@@ -218,6 +265,34 @@ def build_parser() -> argparse.ArgumentParser:
     )
     phase.add_argument("--output", default="results/poc003_phase")
     phase.set_defaults(func=_cmd_poc003_phase)
+
+    eddy = sub.add_parser(
+        "poc004-eddy",
+        help="run and gate the exact conducting-slab magnetic-diffusion benchmark",
+    )
+    eddy.add_argument("--output", default="results/poc004_eddy")
+    eddy.add_argument(
+        "--mesh-sizes",
+        type=float,
+        nargs="+",
+        default=[0.001, 0.0005, 0.00025],
+        help="strictly descending slab mesh characteristic lengths in metres",
+    )
+    eddy.add_argument("--order", type=int, choices=(1, 2), default=2)
+    eddy.add_argument("--frequency", type=float, default=1000.0, help="frequency in hertz")
+    eddy.add_argument(
+        "--conductivity",
+        type=float,
+        default=5.8e7,
+        help="conductor conductivity in siemens per metre",
+    )
+    eddy.add_argument(
+        "--relative-permeability",
+        type=float,
+        default=1.0,
+        help="linear relative permeability for the validation slab",
+    )
+    eddy.set_defaults(func=_cmd_poc004_eddy)
 
     doctor = sub.add_parser("doctor", help="check external FEM executables")
     doctor.set_defaults(func=_cmd_doctor)
