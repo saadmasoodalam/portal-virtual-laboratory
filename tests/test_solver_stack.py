@@ -1,9 +1,11 @@
 from pathlib import Path
 
+import numpy as np
 import pytest
 
-from pvl.core.models import POC001Config
+from pvl.core.models import MeshConfig, POC001Config
 from pvl.geometry.poc001 import write_gmsh_geo
+from pvl.solvers.getdp.poc001_run import run_axisymmetric_poc001
 from pvl.solvers.getdp.runner import (
     SolverUnavailableError,
     discover_executables,
@@ -38,3 +40,17 @@ def test_poc001_geometry_generates_nonempty_3d_mesh(tmp_path: Path):
     assert "$MeshFormat" in text
     assert "$Nodes" in text
     assert "$Elements" in text
+
+
+def test_poc001_getdp_magnetostatic_solve_produces_physical_axis_field(tmp_path: Path):
+    exe = _solver_stack_or_skip()
+    config = POC001Config(mesh=MeshConfig(characteristic_length_m=0.025, order=1))
+    result = run_axisymmetric_poc001(config, tmp_path / "fem", executables=exe)
+
+    assert result.mesh_file.exists()
+    assert result.raw_axis_file.exists()
+    assert np.all(np.isfinite(result.b_axis_t))
+    assert np.all(result.b_axis_t > 0.0)
+    # Initial integration gate. The dedicated convergence gate is tightened after the
+    # solver/geometry combination has demonstrated reproducible convergence in CI.
+    assert result.metrics["max_relative_error"] < 0.20
