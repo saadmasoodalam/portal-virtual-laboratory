@@ -32,3 +32,14 @@ jobs:
 
       - name: Generate analytical POC artifact
         run: python -m pvl.cli.main poc001 --output results/poc001
+
+      - name: Run FEM mesh-convergence study
+        run: python -m pvl.cli.main poc001-fem --output results/poc001_fem
+
+      - name: Upload POC evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pvl-poc001-evidence
+          path: results/
+          if-no-files-found: warn
