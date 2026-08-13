@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 
+import { requestRigPreview } from './api';
 import { parsePreviewScene } from './parsePreviewScene';
 import { PreviewRigCanvas } from './scene/PreviewRigCanvas';
 import type { PreviewScene } from './types';
@@ -9,12 +10,20 @@ function meters(value: number): string {
   return `${(value * 1000).toFixed(1)} mm`;
 }
 
+function isPreviewDocument(value: unknown): boolean {
+  return typeof value === 'object'
+    && value !== null
+    && !Array.isArray(value)
+    && (value as Record<string, unknown>).fidelity === 'illustrative_geometry';
+}
+
 export default function App() {
   const [scene, setScene] = useState<PreviewScene | null>(null);
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [source, setSource] = useState<'api' | 'local' | null>(null);
 
   const selectedItem = useMemo(
     () => scene?.items.find((item) => item.component_id === selected) ?? null,
@@ -24,16 +33,21 @@ export default function App() {
   async function loadFile(file: File) {
     setError(null);
     try {
-      const parsed = parsePreviewScene(JSON.parse(await file.text()));
-      setScene(parsed);
+      const document = JSON.parse(await file.text()) as unknown;
+      const loaded = isPreviewDocument(document)
+        ? { scene: parsePreviewScene(document), source: 'local' as const }
+        : { scene: (await requestRigPreview(document)).scene, source: 'api' as const };
+      setScene(loaded.scene);
+      setSource(loaded.source);
       setFileName(file.name);
       setHidden(new Set());
       setSelected(null);
     } catch (caught) {
       setScene(null);
+      setSource(null);
       setFileName(null);
       setSelected(null);
-      setError(caught instanceof Error ? caught.message : 'Unable to read preview scene.');
+      setError(caught instanceof Error ? caught.message : 'Unable to load Rig or preview JSON.');
     }
   }
 
@@ -54,7 +68,7 @@ export default function App() {
           <h1>Rig Geometry Preview</h1>
         </div>
         <label className="load-button">
-          Load preview JSON
+          Load Rig / preview JSON
           <input
             type="file"
             accept="application/json,.json"
@@ -68,7 +82,7 @@ export default function App() {
       </header>
 
       <div className="boundary-banner">
-        <strong>Visualization boundary:</strong> this client accepts only PVL <code>illustrative_geometry</code> scenes with <code>solver_mesh=false</code>. It does not display a solver mesh or claim hardware fidelity.
+        <strong>PVL-2H boundary:</strong> Rig manifests are sent to <code>/api/v1/rig/preview</code> before rendering. Existing <code>illustrative_geometry</code> preview files remain available as a local diagnostic fallback. Both paths still require <code>solver_mesh=false</code> in the rendered scene.
       </div>
 
       {error && <div className="error-panel">{error}</div>}
@@ -76,9 +90,9 @@ export default function App() {
       {!scene ? (
         <section className="empty-state">
           <div>
-            <p className="eyebrow">PVL-2F</p>
-            <h2>Load a scene exported by the PVL geometry preview pipeline.</h2>
-            <p>The viewer renders the solver-neutral geometry description created downstream of the Rig manifest. No physical dimensions are invented by the browser.</p>
+            <p className="eyebrow">PVL-2H</p>
+            <h2>Load a Rig manifest or an exported preview scene.</h2>
+            <p>A Rig manifest uses the validated FastAPI preview path. A scene already marked as illustrative geometry is parsed locally only as a diagnostic fallback. Solver execution is not exposed by this viewer.</p>
           </div>
         </section>
       ) : (
@@ -93,6 +107,7 @@ export default function App() {
             </div>
             <dl className="scene-meta">
               <div><dt>File</dt><dd>{fileName}</dd></div>
+              <div><dt>Source</dt><dd>{source === 'api' ? 'Validated preview API' : 'Local diagnostic file'}</dd></div>
               <div><dt>Fingerprint</dt><dd className="mono">{scene.geometry_fingerprint.slice(0, 12)}…</dd></div>
               <div><dt>Components</dt><dd>{scene.items.length}</dd></div>
             </dl>
