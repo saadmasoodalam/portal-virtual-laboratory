@@ -30,6 +30,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gmsh getdp
+          gmsh -version
+          getdp -version
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -37,3 +39,15 @@ jobs:
         run: python -m pip install -e '.[dev]'
       - name: Test
         run: python -m pytest -ra
+      - name: Generate analytical POC-001 artifact
+        run: python -m pvl.cli.main poc001 --output results/poc001
+      - name: Run single-coil POC-001 validation
+        run: python -m pvl.cli.main poc001-fem --output results/poc001_fem
+      - name: Run independent dual-coil POC-002 validation
+        run: python -m pvl.cli.main poc002-fem --output results/poc002_fem
+      - name: Run phase and signed-frequency POC-003 validation
+        run: python -m pvl.cli.main poc003-phase --output results/poc003_phase
+      - name: Run eddy-current slab POC-004 validation
+        run: python -m pvl.cli.main poc004-eddy --output results/poc004_eddy
+      - name: Run dual-coil conductive-insert POC-005 validation
+        run: python -m pvl.cli.main poc005-insert --output results/poc005_insert
