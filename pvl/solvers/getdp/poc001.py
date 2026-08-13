@@ -8,25 +8,44 @@ from pvl.core.models import POC001Config
 def render_magnetostatic_pro(config: POC001Config) -> str:
     """Render a self-contained GetDP axisymmetric magnetostatic problem.
 
-    The formulation follows GetDP's documented 2D magnetic-vector-potential approach. For
-    ``Form1P``/``BF_PerpendicularEdge`` in an axisymmetric model, GetDP's own magnetics
-    template uses the second axisymmetric volume Jacobian, ``VolAxiSqu``. This distinction is
-    essential: using ``VolAxi`` applies the wrong geometrical scaling to the vector-potential
-    formulation and produces a non-physical field amplitude.
+    PVL uses the ``VolAxiSqu`` axisymmetric vector-potential formulation used by
+    GetDP's current 2D magnetics template library. The first- and second-order
+    ``Form1P`` spaces are rendered explicitly so the polynomial order of the GetDP
+    field approximation follows ``MeshConfig.order`` instead of merely changing the
+    geometrical Gmsh element order.
 
-    The axisymmetric Jacobian maps the 2D x-y section into the corresponding solid of
-    revolution around the y-axis. No Portal Hypothesis terms enter this formulation.
+    No Portal Hypothesis terms enter this formulation.
     """
     c = config.coil
     s = config.source_section
+    order = config.mesh.order
     current_density = -(c.turns * c.signed_current_a) / s.area_m2
     y_min = min(config.probe_z_m)
     y_max = max(config.probe_z_m)
 
+    edge_basis = ""
+    edge_constraint = ""
+    edge_constraint_definition = ""
+    integration_points = 4
+    if order == 2:
+        edge_basis = """
+      { Name se2; NameOfCoef ae2; Function BF_PerpendicularEdge_2E;
+        Support Dom_Hcurl_a_Mag_2D; Entity EdgesOf[All]; }"""
+        edge_constraint = """
+      { NameOfCoef ae2; EntityType EdgesOf; NameOfConstraint a0_Mag_2D; }"""
+        edge_constraint_definition = """
+  { Name a0_Mag_2D;
+    Case {
+      { Region Boundary; Value 0.; }
+    }
+  }"""
+        integration_points = 6
+
     return f'''// PVL-POC-001 GetDP magnetostatic model.
 // Established physics only: curl(nu curl a) = js.
 // Axisymmetric convention: model lies in z=0 plane, rotation axis is y.
-// Form1P axisymmetric magnetics requires the VolAxiSqu Jacobian.
+// PVL uses the GetDP template-library VolAxiSqu formulation.
+// Finite-element approximation order: {order}.
 
 Group {{
   Air = Region[1];
@@ -53,16 +72,17 @@ Constraint {{
       {{ Region Boundary; Value 0.; }}
     }}
   }}
+{edge_constraint_definition}
 }}
 
 FunctionSpace {{
   {{ Name Hcurl_a_Mag_2D; Type Form1P;
     BasisFunction {{
       {{ Name se; NameOfCoef ae; Function BF_PerpendicularEdge;
-        Support Dom_Hcurl_a_Mag_2D; Entity NodesOf[All]; }}
+        Support Dom_Hcurl_a_Mag_2D; Entity NodesOf[All]; }}{edge_basis}
     }}
     Constraint {{
-      {{ NameOfCoef ae; EntityType NodesOf; NameOfConstraint a_Mag_2D; }}
+      {{ NameOfCoef ae; EntityType NodesOf; NameOfConstraint a_Mag_2D; }}{edge_constraint}
     }}
   }}
 }}
@@ -80,7 +100,7 @@ Integration {{
     Case {{
       {{ Type Gauss;
         Case {{
-          {{ GeoElement Triangle; NumberOfPoints 4; }}
+          {{ GeoElement Triangle; NumberOfPoints {integration_points}; }}
         }}
       }}
     }}
