@@ -24,6 +24,9 @@ pvl = "pvl.cli.main:main"
 [tool.setuptools.packages.find]
 include = ["pvl*"]
 
+[tool.setuptools.package-data]
+"pvl.materials" = ["data/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
