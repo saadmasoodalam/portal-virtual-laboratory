@@ -2,14 +2,24 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
+
+import numpy as np
 
 from pvl.core.models import MeshConfig, POC001Config, POC002Config, POC003Config
 from pvl.core.poc004_models import POC004Config
+from pvl.core.poc005_models import ConductiveInsertConfig, POC005Config
 from pvl.geometry.poc001 import write_gmsh_geo
 from pvl.solvers.getdp.poc001_run import evaluate_poc001_gate, run_mesh_convergence
 from pvl.solvers.getdp.poc002_run import evaluate_poc002_gate, run_dual_mesh_convergence
 from pvl.solvers.getdp.poc004_run import evaluate_poc004_gate, run_slab_mesh_convergence
+from pvl.solvers.getdp.poc005_run import (
+    evaluate_poc005_gate,
+    run_conductive_insert_case,
+    run_insert_mesh_convergence,
+    vacuum_reference_error,
+)
 from pvl.solvers.getdp.runner import SolverUnavailableError, discover_executables, solver_versions
 from pvl.validation.poc001 import analytical_reference
 from pvl.validation.poc003 import dual_coil_phasor_reference, evaluate_poc003_gate
@@ -206,6 +216,135 @@ def _cmd_poc004_eddy(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_poc005_insert(args: argparse.Namespace) -> int:
+    try:
+        executables = discover_executables()
+    except SolverUnavailableError as exc:
+        print(f"PVL FEM status: NOT READY — {exc}")
+        return 2
+
+    mesh = MeshConfig(characteristic_length_m=args.mesh_sizes[0], order=args.order)
+    insert = ConductiveInsertConfig(
+        conductivity_s_m=args.conductivity,
+        relative_permeability=args.relative_permeability,
+    )
+    same = POC005Config(insert=insert, mesh=mesh)
+    same = same.model_copy(
+        update={
+            "drive_a": same.drive_a.model_copy(update={"frequency_hz": args.frequency}),
+            "drive_b": same.drive_b.model_copy(update={"frequency_hz": args.frequency}),
+        }
+    )
+    opposed = same.model_copy(
+        update={"drive_b": same.drive_b.model_copy(update={"phase_rad": math.pi})}
+    )
+    output = Path(args.output)
+
+    same_points = run_insert_mesh_convergence(
+        same,
+        output / "conductive_same_phase",
+        characteristic_lengths_m=tuple(args.mesh_sizes),
+        executables=executables,
+    )
+    opposed_points = run_insert_mesh_convergence(
+        opposed,
+        output / "conductive_opposed_phase",
+        characteristic_lengths_m=tuple(args.mesh_sizes),
+        executables=executables,
+    )
+
+    validation_h = args.vacuum_mesh_size
+    validation_mesh = MeshConfig(characteristic_length_m=validation_h, order=args.order)
+    vacuum_insert = same.insert.model_copy(update={"conductivity_s_m": 0.0, "relative_permeability": 1.0})
+    vacuum_same_config = same.model_copy(update={"insert": vacuum_insert, "mesh": validation_mesh})
+    vacuum_opposed_config = opposed.model_copy(update={"insert": vacuum_insert, "mesh": validation_mesh})
+    vacuum_same_result = run_conductive_insert_case(
+        vacuum_same_config,
+        output / "vacuum_control_same_phase",
+        executables=executables,
+    )
+    vacuum_opposed_result = run_conductive_insert_case(
+        vacuum_opposed_config,
+        output / "vacuum_control_opposed_phase",
+        executables=executables,
+    )
+    vacuum_same_metrics = vacuum_reference_error(vacuum_same_config, vacuum_same_result)
+    vacuum_opposed_metrics = vacuum_reference_error(vacuum_opposed_config, vacuum_opposed_result)
+
+    finest_h = args.mesh_sizes[-1]
+    finest_mesh = MeshConfig(characteristic_length_m=finest_h, order=args.order)
+    a_only_config = same.model_copy(
+        update={
+            "mesh": finest_mesh,
+            "coil_b": same.coil_b.model_copy(update={"current_a": 0.0}),
+        }
+    )
+    b_only_config = same.model_copy(
+        update={
+            "mesh": finest_mesh,
+            "coil_a": same.coil_a.model_copy(update={"current_a": 0.0}),
+        }
+    )
+    a_only = run_conductive_insert_case(
+        a_only_config,
+        output / "linearity_a_only",
+        executables=executables,
+    )
+    b_only = run_conductive_insert_case(
+        b_only_config,
+        output / "linearity_b_only",
+        executables=executables,
+    )
+    combined_b = np.asarray(same_points[-1].b_axis_t, dtype=complex)
+    combined_j = np.asarray(same_points[-1].j_insert_a_m2, dtype=complex)
+    expected_b = a_only.b_axis_t + b_only.b_axis_t
+    expected_j = a_only.j_insert_a_m2 + b_only.j_insert_a_m2
+    b_scale = max(float(np.max(np.abs(expected_b))), np.finfo(float).tiny)
+    j_scale = max(float(np.max(np.abs(expected_j))), np.finfo(float).tiny)
+    superposition = {
+        "b_max_peak_normalized_superposition_error": float(
+            np.max(np.abs(combined_b - expected_b)) / b_scale
+        ),
+        "j_max_peak_normalized_superposition_error": float(
+            np.max(np.abs(combined_j - expected_j)) / j_scale
+        ),
+    }
+
+    gate = evaluate_poc005_gate(
+        same_points,
+        opposed_points,
+        vacuum_same_metrics,
+        vacuum_opposed_metrics,
+        superposition,
+    )
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "validation_gate.json").write_text(
+        json.dumps(gate.as_dict(), indent=2), encoding="utf-8"
+    )
+    versions = solver_versions(executables)
+    payload = {
+        "solver_versions": {"gmsh": versions.gmsh, "getdp": versions.getdp},
+        "finite_element_order": args.order,
+        "frequency_hz": same.frequency_hz,
+        "insert_conductivity_s_m": same.insert.conductivity_s_m,
+        "insert_relative_permeability": same.insert.relative_permeability,
+        "insert_skin_depth_m": same.insert_skin_depth_m,
+        "vacuum_same_metrics": vacuum_same_metrics,
+        "vacuum_opposed_metrics": vacuum_opposed_metrics,
+        "superposition_metrics": superposition,
+        "same_finest_joule_loss_w": same_points[-1].joule_loss_w,
+        "opposed_finest_joule_loss_w": opposed_points[-1].joule_loss_w,
+        "validation_gate": gate.as_dict(),
+    }
+    (output / "summary.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    print(json.dumps(payload, indent=2))
+    if not gate.passed:
+        print("PVL-POC-005 dual-coil conductive-insert validation gate: FAILED")
+        return 7
+    print("PVL-POC-005 dual-coil conductive-insert validation gate: PASSED")
+    return 0
+
+
 def _cmd_doctor(_: argparse.Namespace) -> int:
     try:
         executables = discover_executables()
@@ -293,6 +432,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="linear relative permeability for the validation slab",
     )
     eddy.set_defaults(func=_cmd_poc004_eddy)
+
+    insert = sub.add_parser(
+        "poc005-insert",
+        help="run and gate the harmonic dual-coil conductive-insert integration benchmark",
+    )
+    insert.add_argument("--output", default="results/poc005_insert")
+    insert.add_argument(
+        "--mesh-sizes",
+        type=float,
+        nargs="+",
+        default=[0.01, 0.007, 0.005],
+        help="strictly descending far-field mesh sizes in metres",
+    )
+    insert.add_argument("--vacuum-mesh-size", type=float, default=0.007)
+    insert.add_argument("--order", type=int, choices=(1, 2), default=2)
+    insert.add_argument("--frequency", type=float, default=1000.0)
+    insert.add_argument("--conductivity", type=float, default=5.8e7)
+    insert.add_argument("--relative-permeability", type=float, default=1.0)
+    insert.set_defaults(func=_cmd_poc005_insert)
 
     doctor = sub.add_parser("doctor", help="check external FEM executables")
     doctor.set_defaults(func=_cmd_doctor)

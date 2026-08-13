@@ -45,6 +45,9 @@ jobs:
       - name: Run eddy-current slab POC-004 validation
         run: python -m pvl.cli.main poc004-eddy --output results/poc004_eddy
 
+      - name: Run dual-coil conductive-insert POC-005 validation
+        run: python -m pvl.cli.main poc005-insert --output results/poc005_insert
+
       - name: Upload PVL validation evidence
         if: always()
         uses: actions/upload-artifact@v4
