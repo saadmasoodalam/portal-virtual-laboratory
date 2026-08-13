@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "portal-virtual-laboratory"
+version = "0.1.0.dev1"
+description = "Portal Virtual Laboratory scientific digital-twin simulator"
+requires-python = ">=3.12"
+dependencies = [
+  "numpy>=2.0",
+  "pydantic>=2.8",
+  "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3", "ruff>=0.6"]
+fem = ["gmsh>=4.13", "meshio>=5.3"]
+api = ["fastapi>=0.115", "uvicorn>=0.30"]
+
+[project.scripts]
+pvl = "pvl.cli.main:main"
+
+[tool.setuptools.packages.find]
+include = ["pvl*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
