@@ -11,7 +11,6 @@ from pvl.core.models import MeshConfig, POC003Config
 from pvl.core.poc005_models import POC005Config
 from pvl.geometry.poc005 import write_axisymmetric_gmsh_geo
 from pvl.solvers.getdp.poc001_run import parse_msh2_counts
-from pvl.solvers.getdp.poc004_run import parse_getdp_scalar_line_table
 from pvl.solvers.getdp.poc005 import write_magnetoquasistatic_pro
 from pvl.solvers.getdp.runner import (
     ExecutableSet,
@@ -68,12 +67,58 @@ class POC005GateResult:
         }
 
 
-def _load_complex_line(output_dir: Path, real_name: str, imag_name: str) -> tuple[np.ndarray, np.ndarray]:
-    x_re, re = parse_getdp_scalar_line_table(output_dir / real_name)
-    x_im, im = parse_getdp_scalar_line_table(output_dir / imag_name)
-    if not np.allclose(x_re, x_im, rtol=0.0, atol=1e-14):
+def parse_getdp_real_scalar_line(
+    path: Path,
+    *,
+    coordinate_column: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Parse one coordinate and an explicitly real scalar from complex GetDP Table output.
+
+    GetDP's line table begins with element metadata followed by x/y/z coordinates. In a complex
+    analysis an explicitly real PostProcessing scalar is still serialized as a final
+    ``value_real value_imag`` pair. POC-005 therefore reads the penultimate value and lets the
+    caller select x (column 2) or y (column 3) as the varying physical coordinate.
+    """
+    coordinates: list[float] = []
+    values_out: list[float] = []
+    for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            values = [float(token) for token in line.replace(",", " ").split()]
+        except ValueError:
+            continue
+        if len(values) < 6 or coordinate_column >= len(values):
+            continue
+        coordinates.append(values[coordinate_column])
+        values_out.append(values[-2])
+    if not coordinates:
+        raise ValueError(f"No scalar line samples found in GetDP table: {path}")
+    coordinate = np.asarray(coordinates, dtype=float)
+    field = np.asarray(values_out, dtype=float)
+    order = np.argsort(coordinate)
+    return coordinate[order], field[order]
+
+
+def _load_complex_line(
+    output_dir: Path,
+    real_name: str,
+    imag_name: str,
+    *,
+    coordinate_column: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    coordinate_re, re = parse_getdp_real_scalar_line(
+        output_dir / real_name,
+        coordinate_column=coordinate_column,
+    )
+    coordinate_im, im = parse_getdp_real_scalar_line(
+        output_dir / imag_name,
+        coordinate_column=coordinate_column,
+    )
+    if not np.allclose(coordinate_re, coordinate_im, rtol=0.0, atol=1e-14):
         raise ValueError(f"real/imaginary sample coordinates differ: {real_name}, {imag_name}")
-    return x_re, re + 1j * im
+    return coordinate_re, re + 1j * im
 
 
 def _interpolate_complex(x_raw: np.ndarray, values: np.ndarray, target: np.ndarray) -> np.ndarray:
@@ -83,12 +128,7 @@ def _interpolate_complex(x_raw: np.ndarray, values: np.ndarray, target: np.ndarr
 
 
 def parse_getdp_global_real(path: Path) -> float:
-    """Parse one real global quantity emitted by GetDP from a complex system.
-
-    GetDP typically serializes a real global quantity in a complex analysis as a real/imaginary
-    pair. POC-005 expects Joule losses to be real, so the penultimate value is used when a pair
-    is present. A one-value table is also accepted for compatibility.
-    """
+    """Parse one real global quantity emitted by GetDP from a complex system."""
     for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -151,11 +191,21 @@ def run_conductive_insert_case(
         encoding="utf-8",
     )
 
-    raw_z, raw_b = _load_complex_line(output_dir, "by_axis_re.txt", "by_axis_im.txt")
+    raw_z, raw_b = _load_complex_line(
+        output_dir,
+        "by_axis_re.txt",
+        "by_axis_im.txt",
+        coordinate_column=3,
+    )
     target_z = np.asarray(config.axis_probe_z_m, dtype=float)
     b_axis = _interpolate_complex(raw_z, raw_b, target_z)
 
-    raw_r, raw_j = _load_complex_line(output_dir, "j_insert_re.txt", "j_insert_im.txt")
+    raw_r, raw_j = _load_complex_line(
+        output_dir,
+        "j_insert_re.txt",
+        "j_insert_im.txt",
+        coordinate_column=2,
+    )
     joule_loss = parse_getdp_global_real(output_dir / "joule_losses.txt")
     if joule_loss < -1e-12:
         raise ValueError(f"computed Joule loss is negative: {joule_loss}")
@@ -321,7 +371,9 @@ def _final_changes(points: list[InsertConvergencePoint]) -> tuple[float, float, 
 
 
 def _mesh_checks(points: list[InsertConvergencePoint]) -> tuple[bool, bool, bool]:
-    sizes = all(a.characteristic_length_m > b.characteristic_length_m for a, b in zip(points, points[1:]))
+    sizes = all(
+        a.characteristic_length_m > b.characteristic_length_m for a, b in zip(points, points[1:])
+    )
     nodes = all(a.node_count < b.node_count for a, b in zip(points, points[1:]))
     elements = all(a.element_count < b.element_count for a, b in zip(points, points[1:]))
     return sizes, nodes, elements
