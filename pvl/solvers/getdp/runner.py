@@ -26,6 +26,14 @@ class SolverVersions:
     getdp: str
 
 
+@dataclass(frozen=True)
+class GetDPRun:
+    solve_stdout: str
+    solve_stderr: str
+    post_stdout: str
+    post_stderr: str
+
+
 def discover_executables() -> ExecutableSet:
     gmsh = shutil.which("gmsh")
     getdp = shutil.which("getdp")
@@ -89,3 +97,32 @@ def generate_mesh(
     if not output_path.exists() or output_path.stat().st_size == 0:
         raise SolverExecutionError(f"Gmsh completed without producing a usable mesh: {output_path}")
     return output_path
+
+
+def run_getdp(
+    pro_path: Path,
+    mesh_path: Path,
+    *,
+    resolution: str,
+    post_operation: str,
+    executables: ExecutableSet | None = None,
+) -> GetDPRun:
+    """Solve one GetDP problem and execute one post-processing operation."""
+    exe = executables or discover_executables()
+    pro_path = pro_path.resolve()
+    mesh_path = mesh_path.resolve()
+    cwd = pro_path.parent
+    solve = run_command(
+        [exe.getdp, str(pro_path), "-msh", str(mesh_path), "-solve", resolution],
+        cwd=cwd,
+    )
+    post = run_command(
+        [exe.getdp, str(pro_path), "-msh", str(mesh_path), "-pos", post_operation],
+        cwd=cwd,
+    )
+    return GetDPRun(
+        solve_stdout=solve.stdout,
+        solve_stderr=solve.stderr,
+        post_stdout=post.stdout,
+        post_stderr=post.stderr,
+    )
