@@ -31,7 +31,12 @@ def test_propagation_constant_has_equal_real_and_imaginary_parts():
 def test_finite_slab_oracle_satisfies_dirichlet_boundaries():
     config = POC004Config()
     reference = analytical_slab_reference(config, np.array([0.0, config.length_m]))
-    assert reference.vector_potential_t_m[0] == config.boundary_vector_potential_t_m
+    assert np.isclose(
+        reference.vector_potential_t_m[0],
+        complex(config.boundary_vector_potential_t_m, 0.0),
+        rtol=1e-14,
+        atol=1e-20,
+    )
     assert abs(reference.vector_potential_t_m[-1]) < 1e-20
     assert np.all(np.isfinite(reference.magnetic_flux_density_t))
     assert np.all(np.isfinite(reference.induced_current_density_a_m2))
