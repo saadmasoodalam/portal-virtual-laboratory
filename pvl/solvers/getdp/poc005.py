@@ -23,6 +23,14 @@ def render_magnetoquasistatic_pro(config: POC005Config) -> str:
     y_max = max(config.axis_probe_z_m)
     insert = config.insert
 
+    # Do not use the conductor mid-plane as the retained J-convergence probe. For the
+    # pi-opposed dual-coil state, A_phi and therefore J_phi are antisymmetric in z and the exact
+    # mid-plane is a physical cancellation plane (J=0). Pointwise relative convergence there is
+    # consequently ill-conditioned and measures mesh-symmetry residuals rather than conductor
+    # response. A fixed quarter-thickness interior plane remains well inside the conductor and
+    # carries finite physical induced current in both retained phase states.
+    j_probe_z = insert.center_z_m + 0.25 * insert.axial_thickness_m
+
     edge_basis = ""
     edge_constraint = ""
     edge_constraint_definition = ""
@@ -44,6 +52,8 @@ def render_magnetoquasistatic_pro(config: POC005Config) -> str:
     return f'''// PVL-POC-005: dual-coil harmonic field with conductive annular insert.
 // Established magneto-quasistatic electromagnetics only.
 // Axisymmetric convention: geometry lies in z=0 plane; rotation axis is y.
+// Induced-current convergence is sampled on a fixed interior quarter-thickness plane;
+// the exact insert mid-plane is an antisymmetry null for the pi-opposed drive state.
 
 Group {{
   Air = Region[1];
@@ -180,12 +190,12 @@ PostOperation {{
                {{{config.axis_probe_radial_offset_m:.17g}, {y_max:.17g}, 0.}}}}{{{config.axis_line_samples}}},
         Format Table, File "by_axis_im.txt"];
       Print[jZRe,
-        OnLine{{{{{insert.inner_radius_m:.17g}, {insert.center_z_m:.17g}, 0.}}
-               {{{insert.outer_radius_m:.17g}, {insert.center_z_m:.17g}, 0.}}}}{{{config.conductor_line_samples}}},
+        OnLine{{{{{insert.inner_radius_m:.17g}, {j_probe_z:.17g}, 0.}}
+               {{{insert.outer_radius_m:.17g}, {j_probe_z:.17g}, 0.}}}}{{{config.conductor_line_samples}}},
         Format Table, File "j_insert_re.txt"];
       Print[jZIm,
-        OnLine{{{{{insert.inner_radius_m:.17g}, {insert.center_z_m:.17g}, 0.}}
-               {{{insert.outer_radius_m:.17g}, {insert.center_z_m:.17g}, 0.}}}}{{{config.conductor_line_samples}}},
+        OnLine{{{{{insert.inner_radius_m:.17g}, {j_probe_z:.17g}, 0.}}
+               {{{insert.outer_radius_m:.17g}, {j_probe_z:.17g}, 0.}}}}{{{config.conductor_line_samples}}},
         Format Table, File "j_insert_im.txt"];
       Print[JouleLosses[Vol_C_Mag], OnGlobal, Format Table, File "joule_losses.txt"];
     }}
