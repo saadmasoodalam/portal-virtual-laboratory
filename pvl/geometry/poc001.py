@@ -44,6 +44,11 @@ def render_axisymmetric_gmsh_geo(config: POC001Config) -> str:
     every convergence level scales the source and probe-corridor mesh sizes together. This
     avoids the earlier pseudo-convergence case where only the remote air mesh was refined while
     the winding-source mesh stayed clamped at a fixed size.
+
+    The geometrical mesh remains first-order even when ``MeshConfig.order`` is 2. The second-
+    order solution space is hierarchical and is supplied by GetDP through
+    ``BF_PerpendicularEdge_2E``. Curving the Gmsh triangles would instead create ``Triangle2``
+    geometry elements and conflate solution-polynomial order with geometry interpolation.
     """
     c = config.coil
     a = config.air
@@ -114,7 +119,8 @@ Field[1].Thickness = hFar;
 Background Field = 1;
 
 Mesh.MeshSizeFromPoints = 1;
-Mesh.ElementOrder = {config.mesh.order};
+// Keep geometry linear. GetDP controls the magnetic approximation order.
+Mesh.ElementOrder = 1;
 Mesh.MshFileVersion = 2.2;
 '''
 
