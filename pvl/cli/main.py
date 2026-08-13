@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pvl.core.models import MeshConfig, POC001Config
 from pvl.geometry.poc001 import write_gmsh_geo
-from pvl.solvers.getdp.poc001_run import run_mesh_convergence
+from pvl.solvers.getdp.poc001_run import evaluate_poc001_gate, run_mesh_convergence
 from pvl.solvers.getdp.runner import SolverUnavailableError, discover_executables, solver_versions
 from pvl.validation.poc001 import analytical_reference
 
@@ -45,15 +45,31 @@ def _cmd_poc001_fem(args: argparse.Namespace) -> int:
         characteristic_lengths_m=tuple(args.mesh_sizes),
         executables=executables,
     )
+    gate = evaluate_poc001_gate(points)
+    (output / "validation_gate.json").write_text(
+        json.dumps(gate.as_dict(), indent=2), encoding="utf-8"
+    )
+
     versions = solver_versions(executables)
     payload = {
         "solver_versions": {"gmsh": versions.gmsh, "getdp": versions.getdp},
         "finite_element_order": args.order,
         "convergence": [
-            {"characteristic_length_m": p.characteristic_length_m, **p.metrics} for p in points
+            {
+                "characteristic_length_m": p.characteristic_length_m,
+                "nodes": p.node_count,
+                "elements": p.element_count,
+                **p.metrics,
+            }
+            for p in points
         ],
+        "validation_gate": gate.as_dict(),
     }
     print(json.dumps(payload, indent=2))
+    if not gate.passed:
+        print("PVL-POC-001 validation gate: FAILED")
+        return 3
+    print("PVL-POC-001 validation gate: PASSED")
     return 0
 
 
@@ -80,7 +96,7 @@ def build_parser() -> argparse.ArgumentParser:
     poc.add_argument("--output", default="results/poc001")
     poc.set_defaults(func=_cmd_poc001)
 
-    fem = sub.add_parser("poc001-fem", help="run the GetDP POC-001 mesh-convergence study")
+    fem = sub.add_parser("poc001-fem", help="run and gate the GetDP POC-001 convergence study")
     fem.add_argument("--output", default="results/poc001_fem")
     fem.add_argument(
         "--mesh-sizes",
@@ -94,7 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         choices=(1, 2),
         default=2,
-        help="GetDP/Gmsh finite-element order used for the convergence study",
+        help="GetDP magnetic finite-element solution order used for the convergence study",
     )
     fem.set_defaults(func=_cmd_poc001_fem)
 
