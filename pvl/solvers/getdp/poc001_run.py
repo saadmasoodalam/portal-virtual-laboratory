@@ -44,6 +44,22 @@ class ConvergencePoint:
     element_count: int
 
 
+@dataclass(frozen=True)
+class POC001GateResult:
+    passed: bool
+    criteria: dict[str, bool]
+    observed: dict[str, float | int | bool]
+    tolerances: dict[str, float | int]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "passed": self.passed,
+            "criteria": self.criteria,
+            "observed": self.observed,
+            "tolerances": self.tolerances,
+        }
+
+
 def parse_getdp_axis_table(path: Path) -> tuple[np.ndarray, np.ndarray]:
     """Parse a GetDP ``Format Table`` vector-field cut.
 
@@ -95,6 +111,92 @@ def _symmetry_error(z_m: np.ndarray, field: np.ndarray) -> float | None:
     right = field[::-1]
     scale = np.maximum((np.abs(left) + np.abs(right)) / 2.0, np.finfo(float).tiny)
     return float(np.max(np.abs(left - right) / scale))
+
+
+def _successive_field_change(previous: np.ndarray, current: np.ndarray) -> float:
+    denominator = np.maximum(np.abs(previous), np.finfo(float).tiny)
+    return float(np.max(np.abs(current - previous) / denominator))
+
+
+def evaluate_poc001_gate(
+    points: list[ConvergencePoint],
+    *,
+    min_mesh_levels: int = 3,
+    max_pointwise_relative_error: float = 0.01,
+    max_rms_relative_error: float = 0.005,
+    max_successive_relative_field_change: float = 0.001,
+    max_symmetry_relative_difference: float = 0.0001,
+) -> POC001GateResult:
+    """Evaluate the explicit PVL-POC-001 numerical-validation gate.
+
+    The gate is intentionally stricter than the original integration smoke test. It requires
+    three successively refined meshes, growing mesh complexity, sub-1% pointwise agreement with
+    the matching finite-winding analytical oracle, sub-0.5% RMS error, stabilization of the
+    probe field to 0.1% between the final two meshes, and symmetry to 0.01%.
+    """
+    if not points:
+        raise ValueError("POC-001 gate requires at least one convergence point")
+
+    mesh_sizes_descend = all(
+        a.characteristic_length_m > b.characteristic_length_m for a, b in zip(points, points[1:])
+    )
+    nodes_grow = all(a.node_count < b.node_count for a, b in zip(points, points[1:]))
+    elements_grow = all(a.element_count < b.element_count for a, b in zip(points, points[1:]))
+
+    finest = points[-1]
+    finest_max = float(finest.metrics["max_relative_error"])
+    finest_rms = float(finest.metrics["rms_relative_error"])
+    symmetry = float(finest.metrics.get("symmetry_max_relative_difference", float("inf")))
+
+    if len(points) >= 2:
+        penultimate_field = np.asarray(points[-2].b_axis_t, dtype=float)
+        finest_field = np.asarray(finest.b_axis_t, dtype=float)
+        successive_change = _successive_field_change(penultimate_field, finest_field)
+    else:
+        successive_change = float("inf")
+
+    all_meshes_within_pointwise_tolerance = all(
+        float(point.metrics["max_relative_error"]) <= max_pointwise_relative_error
+        for point in points
+    )
+
+    criteria = {
+        "minimum_mesh_levels": len(points) >= min_mesh_levels,
+        "mesh_sizes_strictly_descend": mesh_sizes_descend,
+        "node_counts_strictly_grow": nodes_grow,
+        "element_counts_strictly_grow": elements_grow,
+        "all_meshes_pointwise_error_within_tolerance": all_meshes_within_pointwise_tolerance,
+        "finest_pointwise_error_within_tolerance": finest_max <= max_pointwise_relative_error,
+        "finest_rms_error_within_tolerance": finest_rms <= max_rms_relative_error,
+        "final_successive_field_change_within_tolerance": (
+            successive_change <= max_successive_relative_field_change
+        ),
+        "finest_symmetry_within_tolerance": symmetry <= max_symmetry_relative_difference,
+    }
+    observed: dict[str, float | int | bool] = {
+        "mesh_levels": len(points),
+        "finest_characteristic_length_m": finest.characteristic_length_m,
+        "finest_nodes": finest.node_count,
+        "finest_elements": finest.element_count,
+        "finest_max_relative_error": finest_max,
+        "finest_rms_relative_error": finest_rms,
+        "final_successive_max_relative_field_change": successive_change,
+        "finest_symmetry_max_relative_difference": symmetry,
+        "all_meshes_within_pointwise_tolerance": all_meshes_within_pointwise_tolerance,
+    }
+    tolerances: dict[str, float | int] = {
+        "min_mesh_levels": min_mesh_levels,
+        "max_pointwise_relative_error": max_pointwise_relative_error,
+        "max_rms_relative_error": max_rms_relative_error,
+        "max_successive_relative_field_change": max_successive_relative_field_change,
+        "max_symmetry_relative_difference": max_symmetry_relative_difference,
+    }
+    return POC001GateResult(
+        passed=all(criteria.values()),
+        criteria=criteria,
+        observed=observed,
+        tolerances=tolerances,
+    )
 
 
 def run_axisymmetric_poc001(
@@ -224,8 +326,7 @@ def run_mesh_convergence(
         field = np.asarray(point.b_axis_t, dtype=float)
         change = None
         if previous is not None:
-            denominator = np.maximum(np.abs(previous), np.finfo(float).tiny)
-            change = float(np.max(np.abs(field - previous) / denominator))
+            change = _successive_field_change(previous, field)
         payload.append(
             {
                 "characteristic_length_m": point.characteristic_length_m,
