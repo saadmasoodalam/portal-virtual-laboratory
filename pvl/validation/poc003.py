@@ -31,11 +31,12 @@ class POC003GateResult:
     tolerances: dict[str, float]
 
     def as_dict(self) -> dict[str, object]:
+        """Return JSON-native scalars even when comparisons originate from NumPy values."""
         return {
-            "passed": self.passed,
-            "criteria": self.criteria,
-            "observed": self.observed,
-            "tolerances": self.tolerances,
+            "passed": bool(self.passed),
+            "criteria": {name: bool(value) for name, value in self.criteria.items()},
+            "observed": {name: float(value) for name, value in self.observed.items()},
+            "tolerances": {name: float(value) for name, value in self.tolerances.items()},
         }
 
 
