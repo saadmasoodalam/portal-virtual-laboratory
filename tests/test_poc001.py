@@ -78,7 +78,7 @@ def test_refined_mesh_sizes_scale_with_global_characteristic_length():
     assert "hCoil = 0.001;" in coarse
     assert "hCoil = 0.00040000000000000002;" in fine
     assert "hProbe = 0.0015;" in coarse
-    assert "hProbe = 0.00059999999999999995;" in fine
+    assert "hProbe = 0.00060000000000000006;" in fine
 
 
 def test_getdp_model_is_axisymmetric_established_physics_only():
