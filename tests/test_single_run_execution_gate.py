@@ -60,7 +60,7 @@ def _persist(tmp_path: Path):
     return rig, package, matrix
 
 
-def test_active_dc_run_is_preflight_ready_but_blocked_without_constructive_solver_geometry(tmp_path: Path):
+def test_active_dc_run_can_pass_permission_gate_without_gate_itself_executing_solver(tmp_path: Path):
     rig, package, matrix = _persist(tmp_path)
     materials = load_builtin_material_library()
     active = next(row for row in matrix if row["state_id"] != "off_off")
@@ -79,12 +79,12 @@ def test_active_dc_run_is_preflight_ready_but_blocked_without_constructive_solve
     assert manifest.solver_route == SolverRoute.MAGNETOSTATIC
     assert manifest.package_integrity_verified is True
     assert manifest.preflight_ready is True
-    assert manifest.execution_allowed is False
+    assert manifest.execution_allowed is True
     assert manifest.solver_execution is False
     assert manifest.single_run_only is True
     assert manifest.batch_execution is False
     assert manifest.biological_testing is False
-    assert [issue.code for issue in manifest.issues] == ["constructive_solver_geometry_unavailable"]
+    assert manifest.issues == ()
     assert (Path(result.root) / "job_manifest.json").is_file()
     assert (Path(result.root) / "environment.json").is_file()
     assert (Path(result.root) / "checksums.json").is_file()
@@ -152,8 +152,7 @@ def test_rig_fingerprint_mismatch_is_recorded_as_blocking_preflight_issue(tmp_pa
         results_root=tmp_path,
     )
     codes = {issue.code for issue in result.manifest.issues}
-    assert "rig_fingerprint_mismatch" in codes
-    assert "constructive_solver_geometry_unavailable" in codes
+    assert codes == {"rig_fingerprint_mismatch"}
     assert result.manifest.preflight_ready is False
     assert result.manifest.execution_allowed is False
 
