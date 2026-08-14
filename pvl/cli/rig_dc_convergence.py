@@ -39,11 +39,13 @@ def main() -> int:
         notes="PVL-2Q exploratory complete-Rig numerical convergence state",
     )
     try:
-        # CI run #139 established that the center field was already stable (<1% successive mesh
-        # change) but the off-center probe set remained source-resolution limited.  Resolve the
-        # 6 mm x 10 mm winding packs and high-mu steel locally instead of forcing the entire air
-        # domain to millimetre-scale elements.  Air-domain convergence is evaluated at the finest
-        # retained global mesh.  The 3% acceptance limits remain unchanged.
+        # Run #150 showed that exact point probes removed the line-interpolation confound, but the
+        # 75% -> 100% outer-domain comparison still moved materially while the direct solve became
+        # very expensive. Keep the retained 20/15/12 mm near-Rig sequence plus 2 mm winding and
+        # 5 mm steel refinement, while grading only distant air toward 40 mm. The fixed 25% near
+        # box is identical across the 50/75/100% domain sequence, so enlargement changes the
+        # truncation boundary without intentionally coarsening the Rig/probe region. The 3%
+        # acceptance limits remain unchanged.
         mesh_points, domain_points, gate = run_rig_dc_mesh_and_domain_convergence(
             experiment,
             topology,
@@ -55,6 +57,9 @@ def main() -> int:
             shared_air_margin=0.75,
             winding_mesh_size_m=0.002,
             steel_mesh_size_m=0.005,
+            far_field_mesh_size_m=0.040,
+            far_field_near_margin_fraction=0.25,
+            far_field_transition_m=0.10,
             probe_y_m=(-0.060, -0.030, 0.0, 0.030, 0.060),
         )
     except SolverUnavailableError as exc:
