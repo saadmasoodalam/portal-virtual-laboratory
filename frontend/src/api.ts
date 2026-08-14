@@ -27,6 +27,24 @@ export interface PreviewApiResult {
   scene: PreviewScene;
 }
 
+export type MaterialCategory = 'gas' | 'metal' | 'glass' | 'liquid';
+
+export interface MaterialCatalogItem {
+  material_id: string;
+  display_name: string;
+  category: MaterialCategory;
+  model_kind: string;
+  provenance_status: string;
+  hardware_fidelity_data: boolean;
+  solver_warning: string;
+}
+
+export interface MaterialCatalog {
+  library_version: string;
+  library_fingerprint: string;
+  materials: MaterialCatalogItem[];
+}
+
 const configuredBase = (import.meta.env.VITE_PVL_API_BASE_URL ?? '').trim();
 const apiBase = configuredBase.endsWith('/') ? configuredBase.slice(0, -1) : configuredBase;
 
@@ -90,6 +108,30 @@ function parseApiResult(value: unknown): PreviewApiResult {
   };
 }
 
+function parseMaterialCatalog(value: unknown): MaterialCatalog {
+  if (!isRecord(value)) throw new Error('Material catalog response must be an object.');
+  const materials = value.materials;
+  if (!Array.isArray(materials)) throw new Error('Material catalog materials must be an array.');
+  return {
+    library_version: requireString(value, 'library_version'),
+    library_fingerprint: requireString(value, 'library_fingerprint'),
+    materials: materials.map((entry) => {
+      if (!isRecord(entry)) throw new Error('Material catalog entry must be an object.');
+      const category = requireString(entry, 'category');
+      if (!['gas', 'metal', 'glass', 'liquid'].includes(category)) throw new Error(`Unknown material category: ${category}`);
+      return {
+        material_id: requireString(entry, 'material_id'),
+        display_name: requireString(entry, 'display_name'),
+        category: category as MaterialCategory,
+        model_kind: requireString(entry, 'model_kind'),
+        provenance_status: requireString(entry, 'provenance_status'),
+        hardware_fidelity_data: requireBoolean(entry, 'hardware_fidelity_data'),
+        solver_warning: typeof entry.solver_warning === 'string' ? entry.solver_warning : '',
+      };
+    }),
+  };
+}
+
 function describeRejectedRequest(status: number, payload: unknown): string {
   if (!isRecord(payload) || !isRecord(payload.detail)) {
     return `Preview API rejected the Rig manifest (HTTP ${status}).`;
@@ -142,6 +184,13 @@ export async function fetchRigTemplate(signal?: AbortSignal): Promise<Record<str
   if (!response.ok) throw new Error(`Rig template request failed (HTTP ${response.status}).`);
   if (!isRecord(payload)) throw new Error('Rig template response must be a JSON object.');
   return payload;
+}
+
+export async function fetchMaterialCatalog(signal?: AbortSignal): Promise<MaterialCatalog> {
+  const response = await fetch(endpoint('/api/v1/materials'), { signal });
+  const payload = await readJson(response);
+  if (!response.ok) throw new Error(`Material catalog request failed (HTTP ${response.status}).`);
+  return parseMaterialCatalog(payload);
 }
 
 export async function requestRigPreview(rigManifest: unknown, signal?: AbortSignal): Promise<PreviewApiResult> {

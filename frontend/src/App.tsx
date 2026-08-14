@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 
-import { fetchRigTemplate, requestRigPreview } from './api';
+import { fetchMaterialCatalog, fetchRigTemplate, requestRigPreview, type MaterialCatalog } from './api';
 import { parsePreviewScene } from './parsePreviewScene';
 import { RigManifestEditor } from './RigManifestEditor';
 import { PreviewRigCanvas } from './scene/PreviewRigCanvas';
@@ -22,6 +22,7 @@ function isPreviewDocument(value: unknown): boolean {
 export default function App() {
   const [scene, setScene] = useState<PreviewScene | null>(null);
   const [manifest, setManifest] = useState<Record<string, unknown> | null>(null);
+  const [materialCatalog, setMaterialCatalog] = useState<MaterialCatalog | null>(null);
   const [manifestSourceName, setManifestSourceName] = useState('canonical API template');
   const [view, setView] = useState<'editor' | 'preview'>('preview');
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
@@ -36,12 +37,20 @@ export default function App() {
     [scene, selected],
   );
 
+  async function ensureMaterialCatalog(): Promise<MaterialCatalog> {
+    if (materialCatalog) return materialCatalog;
+    const catalog = await fetchMaterialCatalog();
+    setMaterialCatalog(catalog);
+    return catalog;
+  }
+
   async function startNewManifest() {
     setBusy(true);
     setError(null);
     try {
-      const template = await fetchRigTemplate();
+      const [template, catalog] = await Promise.all([fetchRigTemplate(), fetchMaterialCatalog()]);
       setManifest(template);
+      setMaterialCatalog(catalog);
       setManifestSourceName('canonical API template');
       setView('editor');
     } catch (caught) {
@@ -63,6 +72,7 @@ export default function App() {
         setView('preview');
       } else {
         if (!isRecord(document)) throw new Error('Rig manifest must be a JSON object.');
+        await ensureMaterialCatalog();
         setManifest(document);
         setManifestSourceName(file.name);
         setScene(null);
@@ -151,27 +161,30 @@ export default function App() {
       </header>
 
       <div className="boundary-banner">
-        <strong>PVL-2I boundary:</strong> dimensions and provenance can now be edited, but no solver can be started from this interface. <code>illustrative</code> values are preview-only; hardware-fidelity readiness requires <code>measured</code> or <code>supplier</code> provenance. Existing preview JSON remains a local diagnostic path only.
+        <strong>PVL-2J boundary:</strong> dimensions, provenance, material assignments, chamber medium and copper-boundary state are editable. Choices come from the versioned backend material catalog. Solver execution remains disabled from this interface.
       </div>
 
       {error && <div className="error-panel">{error}</div>}
 
-      {view === 'editor' && manifest ? (
+      {view === 'editor' && manifest && materialCatalog ? (
         <RigManifestEditor
           manifest={manifest}
           sourceName={manifestSourceName}
           busy={busy}
+          materialCatalog={materialCatalog}
           onChange={setManifest}
           onPreview={() => void previewManifest()}
           onDownload={downloadManifest}
           onReset={() => void startNewManifest()}
         />
+      ) : view === 'editor' && manifest ? (
+        <section className="empty-state"><div><p className="eyebrow">PVL-2J</p><h2>Loading controlled material catalog…</h2></div></section>
       ) : !scene ? (
         <section className="empty-state">
           <div>
-            <p className="eyebrow">PVL-2I</p>
+            <p className="eyebrow">PVL-2J</p>
             <h2>Create a controlled Rig manifest or load an existing file.</h2>
-            <p>Use the canonical template to enter dimensions with explicit provenance, then validate the manifest through the FastAPI preview boundary. Solver execution remains disabled.</p>
+            <p>Use the canonical template to enter dimensions and provenance, select controlled materials and boundary states, then validate through the FastAPI preview boundary. Solver execution remains disabled.</p>
             <button type="button" className="primary-button empty-action" onClick={() => void startNewManifest()} disabled={busy}>
               {busy ? 'Loading…' : 'Create Rig manifest'}
             </button>
