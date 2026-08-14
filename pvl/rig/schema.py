@@ -37,8 +37,11 @@ class RigV1Schema(BaseModel):
     frame: FrameGeometry = Field(default_factory=FrameGeometry)
     copper_boundary: BoundaryGeometry = Field(default_factory=BoundaryGeometry)
     sample_chamber: ChamberGeometry = Field(default_factory=ChamberGeometry)
-    coil_a: CoilGeometry = Field(default_factory=lambda: CoilGeometry(coil_id="A", axis=Direction3D(x=1.0, y=0.0, z=0.0)))
-    coil_b: CoilGeometry = Field(default_factory=lambda: CoilGeometry(coil_id="B", axis=Direction3D(x=-1.0, y=0.0, z=0.0)))
+    # Rig v1 top view places the coils on opposite Y sides of the central chamber.
+    # Their geometric normals point toward the center by default. Electrical polarity remains
+    # an independent experiment variable and must not be inferred from this axis sign.
+    coil_a: CoilGeometry = Field(default_factory=lambda: CoilGeometry(coil_id="A", axis=Direction3D(x=0.0, y=1.0, z=0.0)))
+    coil_b: CoilGeometry = Field(default_factory=lambda: CoilGeometry(coil_id="B", axis=Direction3D(x=0.0, y=-1.0, z=0.0)))
     sensors: list[SensorDefinition] = Field(default_factory=list)
 
     def readiness_report(self) -> ReadinessReport:
