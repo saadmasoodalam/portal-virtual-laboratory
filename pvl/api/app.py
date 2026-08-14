@@ -53,6 +53,7 @@ class MaterialCatalogResponse(BaseModel):
 class ExperimentValidationResponse(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     accepted: bool = True
+    configuration_hash: str
     physics_state_hash: str
     solver_execution: bool = False
     experiment: ExperimentConfig
@@ -163,6 +164,7 @@ def create_app(materials: MaterialLibrary | None = None) -> FastAPI:
     def experiment_validate(experiment: ExperimentConfig) -> ExperimentValidationResponse:
         """Validate the declared experiment state without scheduling or executing a solver."""
         return ExperimentValidationResponse(
+            configuration_hash=experiment.configuration_hash(),
             physics_state_hash=experiment.physics_state_hash(),
             experiment=experiment,
         )
