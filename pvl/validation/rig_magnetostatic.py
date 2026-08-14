@@ -50,7 +50,9 @@ class RigDcConvergenceGate:
         }
 
 
-def _probe_values(result: RigMagnetostaticResult, probe_y_m: tuple[float, ...]) -> tuple[float, ...]:
+def _probe_values(
+    result: RigMagnetostaticResult, probe_y_m: tuple[float, ...]
+) -> tuple[float, ...]:
     y = result.y_m
     b = result.b_y_t
     if any(value < y[0] or value > y[-1] for value in probe_y_m):
@@ -75,14 +77,18 @@ def _point(
     )
 
 
-def _peak_normalized_change(previous: RigDcConvergencePoint, current: RigDcConvergencePoint) -> float:
+def _peak_normalized_change(
+    previous: RigDcConvergencePoint, current: RigDcConvergencePoint
+) -> float:
     prev = np.asarray(previous.probe_b_y_t, dtype=float)
     cur = np.asarray(current.probe_b_y_t, dtype=float)
     scale = max(float(np.max(np.abs(cur))), np.finfo(float).tiny)
     return float(np.max(np.abs(cur - prev)) / scale)
 
 
-def _center_relative_change(previous: RigDcConvergencePoint, current: RigDcConvergencePoint) -> float:
+def _center_relative_change(
+    previous: RigDcConvergencePoint, current: RigDcConvergencePoint
+) -> float:
     scale = max(abs(current.center_b_y_t), np.finfo(float).tiny)
     return float(abs(current.center_b_y_t - previous.center_b_y_t) / scale)
 
@@ -177,15 +183,13 @@ def run_rig_dc_mesh_and_domain_convergence(
     materials: MaterialLibrary,
     output_dir: Path,
     *,
-    # Gmsh 4.12.1 was observed to emit a surface-only partial mesh for this thin exploratory
-    # topology at h=0.05 m and h=0.03 m. Those are meshing-algorithm failure points, not field
-    # convergence data. Retain three nearby levels that remain below the validated h=0.04 mesh
-    # ceiling without weakening any topology or quality gate.
     mesh_sizes_m: tuple[float, ...] = (0.04, 0.035, 0.032),
     air_margins: tuple[float, ...] = (0.25, 0.35, 0.50),
     shared_mesh_size_m: float = 0.04,
     shared_air_margin: float = 0.35,
     minimum_mesh_size_m: float = 0.001,
+    winding_mesh_size_m: float | None = None,
+    steel_mesh_size_m: float | None = None,
     probe_y_m: tuple[float, ...] = (-0.10, -0.05, 0.0, 0.05, 0.10),
     executables: ExecutableSet | None = None,
 ) -> tuple[list[RigDcConvergencePoint], list[RigDcConvergencePoint], RigDcConvergenceGate]:
@@ -210,6 +214,8 @@ def run_rig_dc_mesh_and_domain_convergence(
             characteristic_length_m=mesh_size,
             minimum_characteristic_length_m=minimum_mesh_size_m,
             air_margin_fraction=air_margin,
+            winding_characteristic_length_m=winding_mesh_size_m,
+            steel_characteristic_length_m=steel_mesh_size_m,
         )
         result = run_complete_rig_dc_magnetostatic(
             experiment,
@@ -241,6 +247,10 @@ def run_rig_dc_mesh_and_domain_convergence(
         "probe_y_m": list(probe_y_m),
         "mesh_sequence": [point.__dict__ for point in mesh_points],
         "domain_sequence": [point.__dict__ for point in domain_points],
+        "local_refinement": {
+            "winding_mesh_size_m": winding_mesh_size_m,
+            "steel_mesh_size_m": steel_mesh_size_m,
+        },
         "validation_gate": gate.as_dict(),
         "scientific_boundary": (
             "This is numerical stabilization of an exploratory linear-material complete-Rig "
