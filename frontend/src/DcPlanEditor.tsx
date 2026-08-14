@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'react';
 
 import type { ExperimentConfig } from './api';
-import { planDcExperiment, type DcPlanResult } from './dcPlanApi';
+import {
+  persistDcExperimentPackage,
+  planDcExperiment,
+  type DcPlanResult,
+  type ExperimentPackageResult,
+} from './dcPlanApi';
 
 interface DcPlanEditorProps {
   experiment: ExperimentConfig;
@@ -16,22 +21,43 @@ export function DcPlanEditor({ experiment }: DcPlanEditorProps) {
   const [currentA, setCurrentA] = useState(1.0);
   const [busy, setBusy] = useState(false);
   const [plan, setPlan] = useState<DcPlanResult | null>(null);
+  const [packageResult, setPackageResult] = useState<ExperimentPackageResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setPlan(null);
+    setPackageResult(null);
     setError(null);
   }, [experiment]);
 
   async function buildPlan() {
     setBusy(true);
     setPlan(null);
+    setPackageResult(null);
     setError(null);
     try {
       const result = await planDcExperiment(experiment, currentA);
       setPlan(result);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Unable to create DC plan.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function persistPackage() {
+    if (!plan) return;
+    setBusy(true);
+    setPackageResult(null);
+    setError(null);
+    try {
+      const result = await persistDcExperimentPackage(experiment, currentA);
+      if (result.plan_hash !== plan.plan_hash) {
+        throw new Error('Persistence boundary rejected: returned package does not match the displayed plan hash.');
+      }
+      setPackageResult(result);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to persist scientific package.');
     } finally {
       setBusy(false);
     }
@@ -52,10 +78,10 @@ export function DcPlanEditor({ experiment }: DcPlanEditorProps) {
     <section className="dc-plan-editor">
       <div className="editor-toolbar">
         <div>
-          <p className="eyebrow">PVL-2L planning only</p>
+          <p className="eyebrow">PVL-2M package persistence</p>
           <h2>Rig v1 DC Run-Matrix Planner</h2>
           <p className="muted editor-intro">
-            Generate the documented OFF/A/B/same/opposed DC control matrix with a reproducible seeded run order. Planning creates no solver job and executes no FEM calculation.
+            Generate the controlled DC matrix, then persist it as an integrity-checksummed scientific package. Persistence creates planned run manifests and empty raw-data directories only; it does not execute FEM.
           </p>
         </div>
         <button type="button" className="secondary-button" disabled={!plan} onClick={downloadPlan}>Download plan JSON</button>
@@ -64,15 +90,25 @@ export function DcPlanEditor({ experiment }: DcPlanEditorProps) {
       <div className="dc-plan-controls">
         <label>
           <span>DC current magnitude (A)</span>
-          <input type="number" min="0.000001" step="any" value={currentA} onChange={(event) => { setCurrentA(Number(event.currentTarget.value)); setPlan(null); }} />
+          <input
+            type="number"
+            min="0.000001"
+            step="any"
+            value={currentA}
+            onChange={(event) => {
+              setCurrentA(Number(event.currentTarget.value));
+              setPlan(null);
+              setPackageResult(null);
+            }}
+          />
         </label>
         <div><span>Repetitions</span><strong>{experiment.repetitions}</strong><small>From experiment configuration.</small></div>
         <div><span>Randomization seed</span><strong>{experiment.randomization_seed}</strong><small>Same seed produces the same active-state order.</small></div>
-        <button type="button" className="primary-button" disabled={busy || currentA <= 0} onClick={() => void buildPlan()}>{busy ? 'Planning…' : 'Plan DC matrix'}</button>
+        <button type="button" className="primary-button" disabled={busy || currentA <= 0} onClick={() => void buildPlan()}>{busy && !plan ? 'Planning…' : 'Plan DC matrix'}</button>
       </div>
 
       <div className="editor-notice">
-        Every repetition begins with OFF/OFF, followed by a seeded shuffle of eight active states. Opposed DC states use coil polarity; signed frequency remains +1 for DC. Planning cannot run the solver.
+        Every repetition begins with OFF/OFF, followed by a seeded shuffle of eight active states. Opposed DC states use coil polarity; signed frequency remains +1 for DC. Package persistence never creates solver outputs.
       </div>
 
       {error && <div className="error-panel">{error}</div>}
@@ -86,6 +122,31 @@ export function DcPlanEditor({ experiment }: DcPlanEditorProps) {
             <div><span>Plan hash</span><strong className="mono">{plan.plan_hash.slice(0, 16)}…</strong></div>
             <div><span>Solver execution</span><strong>disabled</strong></div>
           </div>
+
+          <div className="package-persistence-panel">
+            <div>
+              <span>Scientific package</span>
+              <strong>{packageResult ? packageResult.package_id : 'Not persisted'}</strong>
+              <small>Writes experiment.json, run_matrix.json, package_manifest.json, checksums.json, planned run manifests, and empty raw/ directories.</small>
+            </div>
+            <button
+              type="button"
+              className="primary-button"
+              disabled={busy || packageResult !== null}
+              onClick={() => void persistPackage()}
+            >
+              {busy ? 'Persisting…' : packageResult ? 'Package persisted' : 'Persist scientific package'}
+            </button>
+          </div>
+
+          {packageResult && (
+            <div className="package-success">
+              <div><span>Package fingerprint</span><code>{packageResult.package_fingerprint}</code></div>
+              <div><span>Stored under</span><code>{packageResult.relative_path}</code></div>
+              <div><span>Integrity files</span><strong>{packageResult.checksummed_files} files checksummed</strong></div>
+              <div><span>Execution state</span><strong>planned only — solver disabled</strong></div>
+            </div>
+          )}
 
           <div className="plan-table-wrap">
             <table className="plan-table">
