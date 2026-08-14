@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import shutil
+import subprocess
 
 from pydantic import Field
 
@@ -110,7 +111,12 @@ def run_complete_rig_mesh(
     *,
     gmsh_executable: str | None = None,
 ) -> RigMeshRun:
-    """Generate and gate one complete-Rig exploratory mesh without invoking GetDP."""
+    """Generate and gate one complete-Rig exploratory mesh without invoking GetDP.
+
+    Gmsh may write an incomplete surface-only ``.msh`` before returning a nonzero exit status.
+    PVL therefore captures stdout/stderr even on command failure and never treats mere mesh-file
+    existence as proof of a valid three-dimensional mesh.
+    """
     gmsh = gmsh_executable or discover_gmsh()
     output_dir.mkdir(parents=True, exist_ok=True)
     geo_path, manifest = write_complete_rig_geo(topology, config, output_dir / "rig_v1.geo")
@@ -118,10 +124,21 @@ def run_complete_rig_mesh(
     geo_resolved = geo_path.resolve()
     version = gmsh_version(gmsh)
 
-    mesh_run = run_command(
-        [gmsh, str(geo_resolved), "-3", "-format", "msh2", "-o", str(mesh_path)],
-        cwd=geo_resolved.parent,
-    )
+    command = [gmsh, str(geo_resolved), "-3", "-format", "msh2", "-o", str(mesh_path)]
+    try:
+        mesh_run = run_command(command, cwd=geo_resolved.parent)
+    except subprocess.CalledProcessError as exc:
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        (output_dir / "gmsh_stdout.log").write_text(stdout, encoding="utf-8")
+        (output_dir / "gmsh_stderr.log").write_text(stderr, encoding="utf-8")
+        partial = ""
+        if mesh_path.is_file():
+            partial = f"; partial mesh written ({mesh_path.stat().st_size} bytes)"
+        raise SolverExecutionError(
+            f"Gmsh complete-Rig 3D meshing failed with exit code {exc.returncode}{partial}"
+        ) from exc
+
     (output_dir / "gmsh_stdout.log").write_text(mesh_run.stdout, encoding="utf-8")
     (output_dir / "gmsh_stderr.log").write_text(mesh_run.stderr, encoding="utf-8")
     if not mesh_path.is_file() or mesh_path.stat().st_size == 0:
@@ -129,6 +146,14 @@ def run_complete_rig_mesh(
 
     summary = parse_msh2_tetra_summary(mesh_path)
     gate = evaluate_rig_mesh_gate(manifest, summary)
+    if not gate.passed:
+        (output_dir / "validation_gate.json").write_text(
+            json.dumps(gate.model_dump(mode="json"), indent=2, sort_keys=True), encoding="utf-8"
+        )
+        raise SolverExecutionError(
+            "Gmsh produced a mesh that failed the complete-Rig mesh integrity gate"
+        )
+
     (output_dir / "constructive_topology.json").write_text(
         json.dumps(topology.model_dump(mode="json"), indent=2, sort_keys=True),
         encoding="utf-8",
