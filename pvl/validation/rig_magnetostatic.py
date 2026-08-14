@@ -2,13 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+from math import sqrt
 from pathlib import Path
 
 import numpy as np
 
 from pvl.experiments.models import ExperimentConfig
-from pvl.geometry.constructive import RigConstructiveTopology
-from pvl.geometry.gmsh_rig import RigGmshConfig
+from pvl.geometry.constructive import (
+    ConstructivePrimitiveKind,
+    RigConstructiveTopology,
+)
+from pvl.geometry.gmsh_rig import RigGmshConfig, primitive_bounds
 from pvl.materials.library import MaterialLibrary
 from pvl.solvers.getdp.rig_magnetostatic_run import (
     RigMagnetostaticResult,
@@ -50,74 +54,112 @@ class RigDcConvergenceGate:
         }
 
 
-def _probe_sample_coordinates(
+def _aabb_intersects(
+    first: tuple[float, float, float, float, float, float],
+    second: tuple[float, float, float, float, float, float],
+) -> bool:
+    return all(
+        first[index * 2] < second[index * 2 + 1]
+        and second[index * 2] < first[index * 2 + 1]
+        for index in range(3)
+    )
+
+
+def _validate_sensor_volume_boxes(
+    topology: RigConstructiveTopology,
     probe_y_m: tuple[float, ...],
     *,
     half_width_m: float,
-    samples_per_probe: int,
-) -> tuple[float, ...]:
+) -> tuple[str, ...]:
+    """Ensure each fixed sensor cube lies wholly in one retained material region.
+
+    The convergence observable must not average across a material interface. The architecture fixture
+    places the central three probes inside the cylindrical sample medium and the outer two in air;
+    this guard derives that classification from the constructive topology rather than hard-coding it.
+    A conservative AABB check then rejects overlap with every other retained material primitive.
+    """
     if half_width_m <= 0.0:
-        raise ValueError("finite convergence probe half-width must be positive")
-    if samples_per_probe < 3 or samples_per_probe % 2 == 0:
-        raise ValueError("finite convergence probes require an odd sample count of at least three")
-    samples: list[float] = []
-    for center in probe_y_m:
-        samples.extend(
-            float(value)
-            for value in np.linspace(
-                center - half_width_m,
-                center + half_width_m,
-                samples_per_probe,
+        raise ValueError("sensor-volume half-width must be positive")
+    medium = next(item for item in topology.primitives if item.primitive_id == "sample:medium")
+    wall = next(item for item in topology.primitives if item.primitive_id == "sample:wall")
+    if medium.axis != (0.0, 0.0, 1.0) or wall.axis != (0.0, 0.0, 1.0):
+        raise ValueError("PVL-2Q sensor-volume guard currently requires the retained Z-axis chamber")
+    medium_radius = medium.parameters_m["radius"]
+    outer_radius = wall.parameters_m["outer_radius"]
+    height = wall.parameters_m["height"]
+    cx, cy, cz = medium.center_m
+    hosts: list[str] = []
+
+    for probe_y in probe_y_m:
+        if not np.isfinite(probe_y):
+            raise ValueError("sensor-volume probe centers must be finite")
+        x0, x1 = cx - half_width_m, cx + half_width_m
+        y0, y1 = probe_y - half_width_m, probe_y + half_width_m
+        z0, z1 = cz - half_width_m, cz + half_width_m
+        sensor_bounds = (x0, x1, y0, y1, z0, z1)
+
+        dx_max = abs(cx - medium.center_m[0]) + half_width_m
+        dy_max = abs(probe_y - cy) + half_width_m
+        radial_max = sqrt(dx_max * dx_max + dy_max * dy_max)
+        entirely_within_height = z0 >= cz - height / 2.0 and z1 <= cz + height / 2.0
+        inside_medium = radial_max < medium_radius and entirely_within_height
+
+        dx_min = max(abs(cx - wall.center_m[0]) - half_width_m, 0.0)
+        dy_min = max(abs(probe_y - cy) - half_width_m, 0.0)
+        radial_min = sqrt(dx_min * dx_min + dy_min * dy_min)
+        outside_radially = radial_min > outer_radius
+        outside_axially = z1 < cz - height / 2.0 or z0 > cz + height / 2.0
+        outside_chamber = outside_radially or outside_axially
+
+        if inside_medium:
+            host = "sample_medium"
+        elif outside_chamber:
+            host = "air"
+        else:
+            raise ValueError(
+                f"sensor-volume probe at y={probe_y:.17g} m intersects the sample wall/interface"
             )
-        )
-    return tuple(samples)
+
+        for primitive in topology.primitives:
+            if primitive.kind == ConstructivePrimitiveKind.PROBE_POINT:
+                continue
+            if primitive.primitive_id in {"sample:medium", "sample:wall"}:
+                continue
+            if _aabb_intersects(sensor_bounds, primitive_bounds(primitive)):
+                raise ValueError(
+                    f"sensor-volume probe at y={probe_y:.17g} m overlaps {primitive.primitive_id}"
+                )
+        hosts.append(host)
+    return tuple(hosts)
 
 
-def _finite_aperture_probe_values(
+def _probe_values(
     result: RigMagnetostaticResult,
     probe_y_m: tuple[float, ...],
-    sample_y_m: tuple[float, ...],
     *,
-    samples_per_probe: int,
+    use_box_probes: bool,
 ) -> tuple[float, ...]:
-    requested = np.asarray(sample_y_m, dtype=float)
-    if result.probe_y_m.size != requested.size or result.probe_b_y_t.size != requested.size:
-        raise ValueError("complete-Rig finite-aperture probe result is empty or inconsistent")
-    if not np.allclose(result.probe_y_m, requested, rtol=0.0, atol=1e-10):
-        raise ValueError("complete-Rig exact sample coordinates do not match the convergence contract")
-    if not np.all(np.isfinite(result.probe_b_y_t)):
-        raise ValueError("complete-Rig finite-aperture probe result contains non-finite values")
-    expected_count = len(probe_y_m) * samples_per_probe
-    if requested.size != expected_count:
-        raise ValueError("complete-Rig finite-aperture sampling shape is inconsistent")
-    reshaped = result.probe_b_y_t.reshape((len(probe_y_m), samples_per_probe))
-    return tuple(float(value) for value in np.mean(reshaped, axis=1))
+    requested = np.asarray(probe_y_m, dtype=float)
+    actual_y = result.box_probe_y_m if use_box_probes else result.probe_y_m
+    actual_b = result.box_probe_b_y_t if use_box_probes else result.probe_b_y_t
+    label = "sensor-volume" if use_box_probes else "exact point"
+    if actual_y.size != requested.size or actual_b.size != requested.size:
+        raise ValueError(f"complete-Rig {label} result is empty or inconsistent")
+    if not np.allclose(actual_y, requested, rtol=0.0, atol=1e-10):
+        raise ValueError(f"complete-Rig {label} coordinates do not match the convergence contract")
+    if not np.all(np.isfinite(actual_b)):
+        raise ValueError(f"complete-Rig {label} result contains non-finite values")
+    return tuple(float(value) for value in actual_b)
 
 
 def _point(
     result: RigMagnetostaticResult,
     mesh_config: RigGmshConfig,
     probe_y_m: tuple[float, ...],
-    sample_y_m: tuple[float, ...] | None = None,
     *,
-    samples_per_probe: int = 1,
+    use_box_probes: bool = False,
 ) -> RigDcConvergencePoint:
-    if sample_y_m is None:
-        # Compatibility path for unit-level synthetic convergence points and callers that explicitly
-        # request a single exact value. Production PVL-2Q convergence uses finite apertures below.
-        requested = np.asarray(probe_y_m, dtype=float)
-        if result.probe_y_m.size != requested.size or result.probe_b_y_t.size != requested.size:
-            raise ValueError("complete-Rig exact probe result is empty or inconsistent")
-        if not np.allclose(result.probe_y_m, requested, rtol=0.0, atol=1e-10):
-            raise ValueError("complete-Rig exact probe coordinates do not match the convergence contract")
-        probes = tuple(float(value) for value in result.probe_b_y_t)
-    else:
-        probes = _finite_aperture_probe_values(
-            result,
-            probe_y_m,
-            sample_y_m,
-            samples_per_probe=samples_per_probe,
-        )
+    probes = _probe_values(result, probe_y_m, use_box_probes=use_box_probes)
     zero_indices = [index for index, value in enumerate(probe_y_m) if abs(value) <= 1e-14]
     if len(zero_indices) != 1:
         raise ValueError("complete-Rig convergence probe contract requires exactly one y=0 probe")
@@ -250,8 +292,8 @@ def run_rig_dc_mesh_and_domain_convergence(
     far_field_near_margin_fraction: float = 0.25,
     far_field_transition_m: float = 0.10,
     probe_y_m: tuple[float, ...] = (-0.10, -0.05, 0.0, 0.05, 0.10),
-    probe_window_half_width_m: float = 0.005,
-    probe_window_samples: int = 21,
+    probe_box_half_width_m: float = 0.002,
+    probe_box_divisions: tuple[int, int, int] = (4, 4, 4),
     executables: ExecutableSet | None = None,
 ) -> tuple[list[RigDcConvergencePoint], list[RigDcConvergencePoint], RigDcConvergenceGate]:
     if len(mesh_sizes_m) < 3 or len(air_margins) < 3:
@@ -273,11 +315,13 @@ def run_rig_dc_mesh_and_domain_convergence(
         raise ValueError("complete-Rig convergence requires exactly one y=0 probe center")
     if not all(np.isfinite(value) for value in probe_y_m):
         raise ValueError("complete-Rig convergence probe centers must be finite")
+    if len(probe_box_divisions) != 3 or any(value < 1 for value in probe_box_divisions):
+        raise ValueError("sensor-volume OnBox divisions must contain three positive integers")
 
-    sample_y_m = _probe_sample_coordinates(
+    probe_hosts = _validate_sensor_volume_boxes(
+        topology,
         probe_y_m,
-        half_width_m=probe_window_half_width_m,
-        samples_per_probe=probe_window_samples,
+        half_width_m=probe_box_half_width_m,
     )
     exe = executables or discover_executables()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -305,15 +349,11 @@ def run_rig_dc_mesh_and_domain_convergence(
             output_dir / label,
             executables=exe,
             axis_samples=101,
-            probe_y_m=sample_y_m,
+            probe_box_y_m=probe_y_m,
+            probe_box_half_width_m=probe_box_half_width_m,
+            probe_box_divisions=probe_box_divisions,
         )
-        point = _point(
-            result,
-            config,
-            probe_y_m,
-            sample_y_m,
-            samples_per_probe=probe_window_samples,
-        )
+        point = _point(result, config, probe_y_m, use_box_probes=True)
         cache[key] = point
         return point
 
@@ -333,10 +373,12 @@ def run_rig_dc_mesh_and_domain_convergence(
     gate = evaluate_rig_dc_convergence_gate(mesh_points, domain_points)
     payload = {
         "probe_y_m": list(probe_y_m),
-        "probe_sampling": "fixed-coordinate finite-aperture mean of exact GetDP OnPoint samples",
-        "probe_window_half_width_m": probe_window_half_width_m,
-        "probe_window_samples": probe_window_samples,
-        "exact_sample_y_m": list(sample_y_m),
+        "probe_sampling": (
+            "fixed 3D sensor-volume B_y mean from GetDP OnBox samples using tensor trapezoidal integration"
+        ),
+        "probe_box_half_width_m": probe_box_half_width_m,
+        "probe_box_divisions": list(probe_box_divisions),
+        "probe_material_hosts": list(probe_hosts),
         "mesh_sequence": [point.__dict__ for point in mesh_points],
         "domain_sequence": [point.__dict__ for point in domain_points],
         "local_refinement": {
@@ -352,9 +394,10 @@ def run_rig_dc_mesh_and_domain_convergence(
         "validation_gate": gate.as_dict(),
         "scientific_boundary": (
             "This is numerical stabilization of an exploratory linear-material complete-Rig "
-            "magnetostatic model. The finite aperture suppresses element-membership noise from a "
-            "single point and approximates a finite sensor active region; it is not validation "
-            "against physical Rig measurements."
+            "magnetostatic model. The 3D volume observable approximates a finite sensor active "
+            "region and suppresses element-membership sensitivity without changing Maxwell's "
+            "equation, source normalization, materials, boundary condition or the retained 3% gate. "
+            "It is not validation against physical Rig measurements."
         ),
     }
     (output_dir / "convergence.json").write_text(
