@@ -39,11 +39,22 @@ def main() -> int:
         notes="PVL-2Q exploratory complete-Rig numerical convergence state",
     )
     try:
+        # The first CI convergence attempt established that 32-40 mm global mesh ceilings and
+        # 25-50% air padding were still in the pre-asymptotic regime for the complete Rig.  In
+        # particular, the 6 mm x 10 mm winding pack and the truncated exterior domain were not
+        # resolved well enough for a scientific stabilization claim.  The retained validation
+        # profile therefore moves to genuinely finer meshes and a materially larger air domain;
+        # the 3% acceptance limits themselves are unchanged.
         mesh_points, domain_points, gate = run_rig_dc_mesh_and_domain_convergence(
             experiment,
             topology,
             materials,
             Path(args.output),
+            mesh_sizes_m=(0.020, 0.015, 0.012),
+            air_margins=(0.50, 0.75, 1.00),
+            shared_mesh_size_m=0.020,
+            shared_air_margin=0.75,
+            probe_y_m=(-0.060, -0.030, 0.0, 0.030, 0.060),
         )
     except SolverUnavailableError as exc:
         print(f"PVL complete-Rig DC convergence status: NOT READY — {exc}")
