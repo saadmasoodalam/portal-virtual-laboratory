@@ -19,6 +19,7 @@ AIR_VOLUME_TAG = 900
 AIR_SOURCE_TAG = 9000
 AIR_PHYSICAL_TAG = 1
 OUTER_BOUNDARY_PHYSICAL_TAG = 5000
+FAR_FIELD_MESH_FIELD_TAG = 1
 
 
 class RigGmshConfig(FrozenModel):
@@ -28,6 +29,9 @@ class RigGmshConfig(FrozenModel):
     air_min_margin_m: float = Field(default=0.05, gt=0.0)
     winding_characteristic_length_m: float | None = Field(default=None, gt=0.0)
     steel_characteristic_length_m: float | None = Field(default=None, gt=0.0)
+    far_field_characteristic_length_m: float | None = Field(default=None, gt=0.0)
+    far_field_near_margin_fraction: float = Field(default=0.50, gt=0.0)
+    far_field_transition_m: float = Field(default=0.10, gt=0.0)
     msh_version: str = "2.2"
 
     @model_validator(mode="after")
@@ -44,6 +48,11 @@ class RigGmshConfig(FrozenModel):
                 raise ValueError(f"{name} cannot be smaller than minimum characteristic length")
             if value > self.characteristic_length_m:
                 raise ValueError(f"{name} must refine, not coarsen, the global characteristic length")
+        if self.far_field_characteristic_length_m is not None:
+            if self.far_field_characteristic_length_m < self.characteristic_length_m:
+                raise ValueError("far-field characteristic length cannot refine the near-field mesh")
+            if self.far_field_near_margin_fraction >= self.air_margin_fraction:
+                raise ValueError("far-field near margin must be smaller than the outer air margin")
         if self.msh_version != "2.2":
             raise ValueError("PVL currently validates only MSH 2.2 output")
         return self
@@ -130,9 +139,10 @@ def primitive_bounds(
     return (cx - ex, cx + ex, cy - ey, cy + ey, cz - ez, cz + ez)
 
 
-def topology_air_bounds(
+def _padded_topology_bounds(
     topology: RigConstructiveTopology,
-    config: RigGmshConfig,
+    margin_fraction: float,
+    minimum_margin_m: float,
 ) -> tuple[float, float, float, float, float, float]:
     material = [p for p in topology.primitives if p.kind != ConstructivePrimitiveKind.PROBE_POINT]
     if not material:
@@ -141,7 +151,7 @@ def topology_air_bounds(
     minimum = [min(item[axis * 2] for item in bounds) for axis in range(3)]
     maximum = [max(item[axis * 2 + 1] for item in bounds) for axis in range(3)]
     size = [maximum[i] - minimum[i] for i in range(3)]
-    pad = [max(size[i] * config.air_margin_fraction, config.air_min_margin_m) for i in range(3)]
+    pad = [max(size[i] * margin_fraction, minimum_margin_m) for i in range(3)]
     return (
         minimum[0] - pad[0],
         maximum[0] + pad[0],
@@ -150,6 +160,13 @@ def topology_air_bounds(
         minimum[2] - pad[2],
         maximum[2] + pad[2],
     )
+
+
+def topology_air_bounds(
+    topology: RigConstructiveTopology,
+    config: RigGmshConfig,
+) -> tuple[float, float, float, float, float, float]:
+    return _padded_topology_bounds(topology, config.air_margin_fraction, config.air_min_margin_m)
 
 
 def _start_and_vector(
@@ -307,10 +324,51 @@ def _local_mesh_size_lines(
     return lines
 
 
+def _far_field_mesh_size_lines(
+    topology: RigConstructiveTopology,
+    config: RigGmshConfig,
+) -> list[str]:
+    far_size = config.far_field_characteristic_length_m
+    if far_size is None:
+        return []
+    near_bounds = _padded_topology_bounds(
+        topology,
+        config.far_field_near_margin_fraction,
+        config.air_min_margin_m,
+    )
+    outer_bounds = topology_air_bounds(topology, config)
+    if not all(
+        outer_bounds[index] < near_bounds[index] < near_bounds[index + 1] < outer_bounds[index + 1]
+        for index in (0, 2, 4)
+    ):
+        raise ValueError("far-field near box must lie strictly inside the outer air box")
+    xmin, xmax, ymin, ymax, zmin, zmax = near_bounds
+    tag = FAR_FIELD_MESH_FIELD_TAG
+    return [
+        "// Fixed near-Rig resolution with a graded coarse far field. The near box depends only",
+        "// on the material topology, so enlarging the outer air domain does not intentionally",
+        "// coarsen the region containing the Rig and convergence probes.",
+        f"Field[{tag}] = Box;",
+        f"Field[{tag}].VIn = {_fmt(config.characteristic_length_m)};",
+        f"Field[{tag}].VOut = {_fmt(far_size)};",
+        f"Field[{tag}].XMin = {_fmt(xmin)};",
+        f"Field[{tag}].XMax = {_fmt(xmax)};",
+        f"Field[{tag}].YMin = {_fmt(ymin)};",
+        f"Field[{tag}].YMax = {_fmt(ymax)};",
+        f"Field[{tag}].ZMin = {_fmt(zmin)};",
+        f"Field[{tag}].ZMax = {_fmt(zmax)};",
+        f"Field[{tag}].Thickness = {_fmt(config.far_field_transition_m)};",
+        f"Background Field = {tag};",
+    ]
+
+
 def render_complete_rig_geo(
     topology: RigConstructiveTopology, config: RigGmshConfig
 ) -> tuple[str, RigGmshManifest]:
     manifest = build_gmsh_manifest(topology, config)
+    maximum_characteristic_length = (
+        config.far_field_characteristic_length_m or config.characteristic_length_m
+    )
     lines = [
         "// PVL complete-Rig exploratory Gmsh geometry.",
         "// Ordinary geometry/meshing only. No GetDP solve and no Portal Hypothesis term.",
@@ -319,7 +377,7 @@ def render_complete_rig_geo(
         f"Mesh.MshFileVersion = {config.msh_version};",
         "Mesh.ElementOrder = 1;",
         f"Mesh.CharacteristicLengthMin = {_fmt(config.minimum_characteristic_length_m)};",
-        f"Mesh.CharacteristicLengthMax = {_fmt(config.characteristic_length_m)};",
+        f"Mesh.CharacteristicLengthMax = {_fmt(maximum_characteristic_length)};",
         "Mesh.MeshSizeFromCurvature = 0;",
         "Mesh.MeshSizeFromPoints = 1;",
         "Mesh.MeshSizeExtendFromBoundary = 1;",
@@ -363,6 +421,9 @@ def render_complete_rig_geo(
                 "",
             ]
         )
+    far_field_lines = _far_field_mesh_size_lines(topology, config)
+    if far_field_lines:
+        lines.extend([*far_field_lines, ""])
     lines.extend(
         [
             "// PVL-2Q identifies only the six external faces of the padded air box. Material",
