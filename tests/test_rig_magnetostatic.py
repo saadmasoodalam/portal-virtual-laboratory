@@ -123,6 +123,23 @@ def test_complete_rig_getdp_formulation_uses_3d_hcurl_tree_cotree_and_linear_mat
     assert "Type Complex" not in text
 
 
+def test_complete_rig_getdp_formulation_emits_exact_onpoint_probe_files():
+    _, topology, materials, manifest, experiment = _state(a_current=1.0)
+    text = render_rig_magnetostatic_pro(
+        experiment,
+        topology,
+        manifest,
+        materials,
+        probe_y_m=(-0.03, 0.0, 0.03),
+    )
+    assert text.count("OnPoint") == 3
+    assert 'File "b_probe_000.txt"' in text
+    assert 'File "b_probe_001.txt"' in text
+    assert 'File "b_probe_002.txt"' in text
+    assert "OnPoint {0, -0.029999999999999999, 0}" in text
+    assert "OnPoint {0, 0, 0}" in text
+
+
 def test_source_expression_has_no_axis_singularity_inside_winding_pack():
     _, topology, _, manifest, experiment = _state(a_current=1.0)
     source_a, _ = build_winding_sources(experiment, topology, manifest)
