@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import pytest
 
@@ -14,6 +15,7 @@ from pvl.solvers.getdp.rig_magnetostatic import (
     build_winding_sources,
     render_rig_magnetostatic_pro,
 )
+from pvl.solvers.getdp.rig_magnetostatic_run import _read_box_probe_mean
 
 
 def _state(*, a_current: float = 1.0, a_polarity: int = 1, b_current: float = 0.0, b_polarity: int = 1):
@@ -138,6 +140,42 @@ def test_complete_rig_getdp_formulation_emits_exact_onpoint_probe_files():
     assert 'File "b_probe_002.txt"' in text
     assert "OnPoint {0, -0.029999999999999999, 0}" in text
     assert "OnPoint {0, 0, 0}" in text
+
+
+def test_complete_rig_getdp_formulation_emits_fixed_onbox_sensor_volumes():
+    _, topology, materials, manifest, experiment = _state(a_current=1.0)
+    text = render_rig_magnetostatic_pro(
+        experiment,
+        topology,
+        manifest,
+        materials,
+        probe_box_y_m=(-0.03, 0.0, 0.03),
+        probe_box_half_width_m=0.002,
+        probe_box_divisions=(4, 4, 4),
+    )
+    assert text.count("Print[b, OnBox") == 3
+    assert 'File "b_probe_box_000.txt"' in text
+    assert 'File "b_probe_box_001.txt"' in text
+    assert 'File "b_probe_box_002.txt"' in text
+    assert "} {4, 4, 4}, Format Table" in text
+    assert "Convergence sensor volumes use fixed GetDP OnBox sampling" in text
+
+
+def test_sensor_volume_parser_computes_tensor_trapezoidal_volume_mean(tmp_path: Path):
+    path = tmp_path / "b_probe_box_000.txt"
+    rows: list[str] = []
+    for x in (-1.0, 1.0):
+        for y in (-1.0, 1.0):
+            for z in (-1.0, 1.0):
+                by = 5.0 + x + 2.0 * y - 0.5 * z
+                rows.append(f"1 0 {x} {y} {z} 0 {by} 0")
+    path.write_text("\n".join(rows), encoding="utf-8")
+    mean = _read_box_probe_mean(
+        path,
+        center_xyz_m=(0.0, 0.0, 0.0),
+        half_width_m=1.0,
+    )
+    assert mean == pytest.approx(5.0)
 
 
 def test_source_expression_has_no_axis_singularity_inside_winding_pack():
