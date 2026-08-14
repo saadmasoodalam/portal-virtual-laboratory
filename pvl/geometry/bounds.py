@@ -25,6 +25,9 @@ def _centered(center, extents):
 def component_bounds(component: GeometryComponent) -> Bounds3D:
     p = component.parameters_m
     if component.shape == RigShape.FRAME_ENVELOPE:
+        # PVL-2O freezes the legacy schema mapping explicitly:
+        # outer_width -> top-view X span, outer_depth -> top-view Y span,
+        # outer_height -> declared Z envelope.
         return _centered(component.center_m, (p["outer_width"] / 2, p["outer_depth"] / 2, p["outer_height"] / 2))
     if component.shape == RigShape.OPEN_RECTANGULAR_LOOP:
         return _centered(component.center_m, (p["outer_width"] / 2, p["outer_depth"] / 2, p["thickness"] / 2))
