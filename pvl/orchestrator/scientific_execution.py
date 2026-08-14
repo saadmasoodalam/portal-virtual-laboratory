@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import csv
-import json
 from pathlib import Path
 import shutil
 from typing import Callable, Literal
@@ -150,6 +149,7 @@ def _execution_fingerprint_payload(
     *,
     package_id: str,
     package_fingerprint: str,
+    run_id: str,
     run_config: ExperimentConfig,
     topology_fingerprint: str,
     mesh_config: RigGmshConfig,
@@ -159,7 +159,7 @@ def _execution_fingerprint_payload(
         "schema_version": SCIENTIFIC_EXECUTION_SCHEMA_VERSION,
         "package_id": package_id,
         "package_fingerprint": package_fingerprint,
-        "run_id": run_config.experiment_id,
+        "run_id": run_id,
         "run_configuration_hash": run_config.configuration_hash(),
         "physics_state_hash": run_config.physics_state_hash(),
         "rig_definition_fingerprint": run_config.rig_definition_fingerprint,
@@ -219,6 +219,7 @@ def execute_and_persist_single_run(
         _execution_fingerprint_payload(
             package_id=package.package_id,
             package_fingerprint=package.package_fingerprint,
+            run_id=run_id,
             run_config=run_config,
             topology_fingerprint=topology_fingerprint,
             mesh_config=mesh_config,
@@ -282,7 +283,7 @@ def execute_and_persist_single_run(
             {
                 "rig_definition_fingerprint": actual_rig_fingerprint,
                 "constructive_topology_fingerprint": topology_fingerprint,
-                "geometry_fidelity": topology.geometry_fidelity,
+                "geometry_fidelity": topology.topology_fidelity,
                 "rig": rig.model_dump(mode="json"),
                 "constructive_topology": topology.model_dump(mode="json"),
             },
@@ -330,7 +331,7 @@ def execute_and_persist_single_run(
             solver_route=report.solver_route,
             created_utc=captured,
             solver_execution=solver_execution,
-            geometry_fidelity=topology.geometry_fidelity,
+            geometry_fidelity=topology.topology_fidelity,
             mesh_configuration_hash=mesh_config.configuration_hash(),
             solver_versions=solver_version_map,
         )
