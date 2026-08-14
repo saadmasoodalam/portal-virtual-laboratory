@@ -19,7 +19,8 @@ class HomogenizedWindingSource:
     pack_cross_section_m2: float
     current_density_a_m2: float
     center_m: tuple[float, float, float]
-    axis_y_sign: int
+    geometric_axis_y_sign: int
+    electrical_reference_y_sign: int = 1
 
     @property
     def ampere_turns(self) -> float:
@@ -71,7 +72,7 @@ def _winding_source(
         pack_cross_section_m2=area,
         current_density_a_m2=ampere_turns / area,
         center_m=primitive.center_m,
-        axis_y_sign=1 if primitive.axis[1] > 0.0 else -1,
+        geometric_axis_y_sign=1 if primitive.axis[1] > 0.0 else -1,
     )
 
 
@@ -82,10 +83,12 @@ def build_winding_sources(
 ) -> tuple[HomogenizedWindingSource, HomogenizedWindingSource]:
     """Construct divergence-free azimuthal source amplitudes for the two DC winding packs.
 
-    The volume current density magnitude is ``N I / A_pack``. Its analytic direction in GetDP is
-    ``axis × radial_hat`` around the frozen ±Y coil axis. Therefore the integrated current through
-    any radial/axial winding-pack cross-section is exactly ``N I``; turns are not applied again in
-    the magnetostatic equation.
+    ``J = N I / A_pack`` and the analytic source flows azimuthally around the frozen Y-axis.
+    The geometric normal signs recorded by PVL-2O are deliberately *not* electrical polarity.
+    Positive experiment polarity is referenced to global +Y for both coils, matching the validated
+    POC-002 convention where equal positive currents add and opposite polarity cancels. The
+    integrated current through a radial/axial pack cross-section is exactly ``N I``; turns are not
+    applied again in the magnetostatic equation.
     """
     for label, drive in (("coil_a", experiment.coil_a), ("coil_b", experiment.coil_b)):
         if drive.mode not in {DriveMode.OFF, DriveMode.DC}:
@@ -98,15 +101,13 @@ def build_winding_sources(
 
 def _source_expression(source: HomogenizedWindingSource) -> str:
     cx, _, cz = source.center_m
-    radial = (
-        f"Sqrt[(X[] - ({cx:.17g}))^2 + (Z[] - ({cz:.17g}))^2]"
-    )
-    # Positive source follows axis × radial_hat, so right-hand rule gives +B along the
-    # geometric coil axis. Electrical polarity is already included in current_density_a_m2.
+    radial = f"Sqrt[(X[] - ({cx:.17g}))^2 + (Z[] - ({cz:.17g}))^2]"
+    reference = source.electrical_reference_y_sign
+    # +Y reference uses +Y × radial_hat. Signed current already contains the experiment polarity.
     return (
         f"({source.current_density_a_m2:.17g}) * Vector["
-        f"({source.axis_y_sign}) * (Z[] - ({cz:.17g})) / ({radial}), "
-        f"0., -({source.axis_y_sign}) * (X[] - ({cx:.17g})) / ({radial})]"
+        f"({reference}) * (Z[] - ({cz:.17g})) / ({radial}), "
+        f"0., -({reference}) * (X[] - ({cx:.17g})) / ({radial})]"
     )
 
 
@@ -128,11 +129,10 @@ def render_rig_magnetostatic_pro(
         raise ValueError("Gmsh manifest Rig fingerprint does not match constructive topology")
 
     source_a, source_b = build_winding_sources(experiment, topology, manifest)
-    regions = {item.primitive_id: item for item in manifest.physical_regions}
     all_volume_tags = [manifest.air_physical_tag] + [item.physical_tag for item in manifest.physical_regions]
     source_tags = [source_a.physical_tag, source_b.physical_tag]
 
-    material_functions: list[str] = [f"  nu[Air] = 1. / mu0;"]
+    material_functions: list[str] = ["  nu[Air] = 1. / mu0;"]
     for region in manifest.physical_regions:
         if region.material_id is None:
             raise ValueError(f"material region has no material id: {region.primitive_id}")
@@ -155,10 +155,8 @@ def render_rig_magnetostatic_pro(
         "  Vol_S_Mag = Region[{" + ", ".join(str(tag) for tag in source_tags) + "}];",
     ])
 
-    xmin, xmax, ymin, ymax, zmin, zmax = manifest.air_bounds_m
-    chamber = next(
-        item for item in topology.primitives if item.primitive_id == "sample:medium"
-    )
+    _, _, ymin, ymax, _, _ = manifest.air_bounds_m
+    chamber = next(item for item in topology.primitives if item.primitive_id == "sample:medium")
     px, _, pz = chamber.center_m
     line_margin = max(1e-6, 0.01 * (ymax - ymin))
     line_y0 = ymin + line_margin
@@ -167,6 +165,7 @@ def render_rig_magnetostatic_pro(
     return f'''// PVL-2Q complete-Rig 3D DC magnetostatic formulation.
 // Established magnetostatics only: curl(nu curl a) = js.
 // Homogenized winding sources use J = N I / A_pack and analytic divergence-free azimuthal flow.
+// Coil geometric normals do not define electrical polarity; +polarity is global +Y for both coils.
 // No eddy-current, thermal, anomaly, biological or Portal Hypothesis term is present.
 
 Group {{
