@@ -11,6 +11,7 @@ import {
 } from './api';
 import { ExperimentEditor } from './ExperimentEditor';
 import { parsePreviewScene } from './parsePreviewScene';
+import { ResultsDashboard } from './ResultsDashboard';
 import { RigManifestEditor } from './RigManifestEditor';
 import { PreviewRigCanvas } from './scene/PreviewRigCanvas';
 import type { PreviewScene } from './types';
@@ -28,6 +29,8 @@ function isPreviewDocument(value: unknown): boolean {
   return isRecord(value) && value.fidelity === 'illustrative_geometry';
 }
 
+type LaboratoryView = 'editor' | 'preview' | 'experiment' | 'results';
+
 export default function App() {
   const [scene, setScene] = useState<PreviewScene | null>(null);
   const [manifest, setManifest] = useState<Record<string, unknown> | null>(null);
@@ -35,7 +38,8 @@ export default function App() {
   const [experiment, setExperiment] = useState<ExperimentConfig | null>(null);
   const [physicsStateHash, setPhysicsStateHash] = useState<string | null>(null);
   const [manifestSourceName, setManifestSourceName] = useState('canonical API template');
-  const [view, setView] = useState<'editor' | 'preview' | 'experiment'>('preview');
+  const [view, setView] = useState<LaboratoryView>('preview');
+  const [previousView, setPreviousView] = useState<Exclude<LaboratoryView, 'results'>>('preview');
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -58,6 +62,16 @@ export default function App() {
   function invalidateExperiment() {
     setExperiment(null);
     setPhysicsStateHash(null);
+  }
+
+  function openResults() {
+    if (view !== 'results') setPreviousView(view);
+    setError(null);
+    setView('results');
+  }
+
+  function closeResults() {
+    setView(previousView);
   }
 
   async function startNewManifest() {
@@ -198,6 +212,9 @@ export default function App() {
           {scene && view === 'experiment' && (
             <button type="button" className="secondary-button" onClick={() => setView('preview')}>View Rig</button>
           )}
+          {view !== 'results' && (
+            <button type="button" className="secondary-button" onClick={openResults}>Scientific results</button>
+          )}
           <button type="button" className="secondary-button" onClick={() => void startNewManifest()} disabled={busy}>
             New Rig manifest
           </button>
@@ -217,12 +234,14 @@ export default function App() {
       </header>
 
       <div className="boundary-banner">
-        <strong>PVL-2K boundary:</strong> Rig configuration and Coil A/B excitation states can now be declared and validated independently. Experiment validation returns a deterministic physics-state hash but never schedules or executes a solver.
+        <strong>PVL scientific boundary:</strong> Rig configuration, excitation, solver execution evidence and derived metrics remain separated from physical validation and Portal-hypothesis interpretation.
       </div>
 
       {error && <div className="error-panel">{error}</div>}
 
-      {view === 'experiment' && experiment ? (
+      {view === 'results' ? (
+        <ResultsDashboard initialExperimentId={experiment?.experiment_id ?? ''} onBack={closeResults} />
+      ) : view === 'experiment' && experiment ? (
         <ExperimentEditor
           experiment={experiment}
           busy={busy}
@@ -244,16 +263,19 @@ export default function App() {
           onReset={() => void startNewManifest()}
         />
       ) : view === 'editor' && manifest ? (
-        <section className="empty-state"><div><p className="eyebrow">PVL-2K</p><h2>Loading controlled material catalog…</h2></div></section>
+        <section className="empty-state"><div><p className="eyebrow">PVL</p><h2>Loading controlled material catalog…</h2></div></section>
       ) : !scene ? (
         <section className="empty-state">
           <div>
-            <p className="eyebrow">PVL-2K</p>
-            <h2>Create a controlled Rig manifest or load an existing file.</h2>
-            <p>Complete and validate the Rig first. PVL then creates a separate fingerprinted experiment state for Coil A and Coil B excitation without running the solver.</p>
-            <button type="button" className="primary-button empty-action" onClick={() => void startNewManifest()} disabled={busy}>
-              {busy ? 'Loading…' : 'Create Rig manifest'}
-            </button>
+            <p className="eyebrow">PVL</p>
+            <h2>Create a controlled Rig manifest or inspect verified scientific results.</h2>
+            <p>Complete and validate the Rig first. PVL keeps geometry, excitation, execution evidence and interpretation as separate auditable layers.</p>
+            <div className="topbar-actions empty-action">
+              <button type="button" className="primary-button" onClick={() => void startNewManifest()} disabled={busy}>
+                {busy ? 'Loading…' : 'Create Rig manifest'}
+              </button>
+              <button type="button" className="secondary-button" onClick={openResults}>Open scientific results</button>
+            </div>
           </div>
         </section>
       ) : (
