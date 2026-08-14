@@ -14,10 +14,12 @@ from pvl.geometry.constructive import (
 )
 
 
-RIG_GMSH_SCHEMA_VERSION = "pvl-rig-gmsh-v1"
+RIG_GMSH_SCHEMA_VERSION = "pvl-rig-gmsh-v2"
 AIR_VOLUME_TAG = 900
 AIR_SOURCE_TAG = 9000
 AIR_PHYSICAL_TAG = 1
+OUTER_BOUNDARY_PHYSICAL_TAG = 5000
+FAR_FIELD_MESH_FIELD_TAG = 1
 
 
 class RigGmshConfig(FrozenModel):
@@ -25,14 +27,34 @@ class RigGmshConfig(FrozenModel):
     minimum_characteristic_length_m: float = Field(default=0.001, gt=0.0)
     air_margin_fraction: float = Field(default=0.35, gt=0.0)
     air_min_margin_m: float = Field(default=0.05, gt=0.0)
+    winding_characteristic_length_m: float | None = Field(default=None, gt=0.0)
+    steel_characteristic_length_m: float | None = Field(default=None, gt=0.0)
+    far_field_characteristic_length_m: float | None = Field(default=None, gt=0.0)
+    far_field_near_margin_fraction: float = Field(default=0.50, gt=0.0)
+    far_field_transition_m: float = Field(default=0.10, gt=0.0)
     msh_version: str = "2.2"
 
     @model_validator(mode="after")
     def mesh_size_order(self) -> "RigGmshConfig":
         if self.minimum_characteristic_length_m > self.characteristic_length_m:
             raise ValueError("minimum characteristic length cannot exceed global characteristic length")
+        for name, value in (
+            ("winding_characteristic_length_m", self.winding_characteristic_length_m),
+            ("steel_characteristic_length_m", self.steel_characteristic_length_m),
+        ):
+            if value is None:
+                continue
+            if value < self.minimum_characteristic_length_m:
+                raise ValueError(f"{name} cannot be smaller than minimum characteristic length")
+            if value > self.characteristic_length_m:
+                raise ValueError(f"{name} must refine, not coarsen, the global characteristic length")
+        if self.far_field_characteristic_length_m is not None:
+            if self.far_field_characteristic_length_m < self.characteristic_length_m:
+                raise ValueError("far-field characteristic length cannot refine the near-field mesh")
+            if self.far_field_near_margin_fraction >= self.air_margin_fraction:
+                raise ValueError("far-field near margin must be smaller than the outer air margin")
         if self.msh_version != "2.2":
-            raise ValueError("PVL-2P currently validates only MSH 2.2 output")
+            raise ValueError("PVL currently validates only MSH 2.2 output")
         return self
 
 
@@ -55,11 +77,14 @@ class RigGmshManifest(FrozenModel):
     air_physical_name: str = "PVL_Air"
     air_physical_tag: int = AIR_PHYSICAL_TAG
     air_volume_tag: int = AIR_VOLUME_TAG
+    outer_boundary_physical_name: str = "PVL_OuterBoundary"
+    outer_boundary_physical_tag: int = OUTER_BOUNDARY_PHYSICAL_TAG
     air_bounds_m: tuple[float, float, float, float, float, float]
     physical_regions: tuple[RigPhysicalRegion, ...]
 
     @property
     def required_physical_names(self) -> tuple[str, ...]:
+        """Required 3D physical-volume names; the outer boundary is a 2D physical group."""
         return (self.air_physical_name,) + tuple(region.physical_name for region in self.physical_regions)
 
 
@@ -72,20 +97,27 @@ def _physical_name(primitive_id: str) -> str:
     return "PVL_" + value
 
 
-def _axis_extent(axis: tuple[float, float, float], axial_half: float, radial: float) -> tuple[float, float, float]:
+def _axis_extent(
+    axis: tuple[float, float, float], axial_half: float, radial: float
+) -> tuple[float, float, float]:
     return tuple(
         axial_half * abs(component) + radial * sqrt(max(0.0, 1.0 - component * component))
         for component in axis
     )
 
 
-def primitive_bounds(primitive: ConstructivePrimitive) -> tuple[float, float, float, float, float, float]:
+def primitive_bounds(
+    primitive: ConstructivePrimitive,
+) -> tuple[float, float, float, float, float, float]:
     cx, cy, cz = primitive.center_m
     if primitive.kind == ConstructivePrimitiveKind.BOX:
         if primitive.size_m is None:
             raise ValueError(f"box primitive has no size: {primitive.primitive_id}")
         ex, ey, ez = (value / 2.0 for value in primitive.size_m)
-    elif primitive.kind in {ConstructivePrimitiveKind.CYLINDRICAL_SHELL, ConstructivePrimitiveKind.CYLINDRICAL_VOLUME}:
+    elif primitive.kind in {
+        ConstructivePrimitiveKind.CYLINDRICAL_SHELL,
+        ConstructivePrimitiveKind.CYLINDRICAL_VOLUME,
+    }:
         if primitive.axis is None:
             raise ValueError(f"cylindrical primitive has no axis: {primitive.primitive_id}")
         radius = primitive.parameters_m.get("outer_radius", primitive.parameters_m.get("radius"))
@@ -107,9 +139,10 @@ def primitive_bounds(primitive: ConstructivePrimitive) -> tuple[float, float, fl
     return (cx - ex, cx + ex, cy - ey, cy + ey, cz - ez, cz + ez)
 
 
-def topology_air_bounds(
+def _padded_topology_bounds(
     topology: RigConstructiveTopology,
-    config: RigGmshConfig,
+    margin_fraction: float,
+    minimum_margin_m: float,
 ) -> tuple[float, float, float, float, float, float]:
     material = [p for p in topology.primitives if p.kind != ConstructivePrimitiveKind.PROBE_POINT]
     if not material:
@@ -118,7 +151,7 @@ def topology_air_bounds(
     minimum = [min(item[axis * 2] for item in bounds) for axis in range(3)]
     maximum = [max(item[axis * 2 + 1] for item in bounds) for axis in range(3)]
     size = [maximum[i] - minimum[i] for i in range(3)]
-    pad = [max(size[i] * config.air_margin_fraction, config.air_min_margin_m) for i in range(3)]
+    pad = [max(size[i] * margin_fraction, minimum_margin_m) for i in range(3)]
     return (
         minimum[0] - pad[0],
         maximum[0] + pad[0],
@@ -127,6 +160,13 @@ def topology_air_bounds(
         minimum[2] - pad[2],
         maximum[2] + pad[2],
     )
+
+
+def topology_air_bounds(
+    topology: RigConstructiveTopology,
+    config: RigGmshConfig,
+) -> tuple[float, float, float, float, float, float]:
+    return _padded_topology_bounds(topology, config.air_margin_fraction, config.air_min_margin_m)
 
 
 def _start_and_vector(
@@ -175,11 +215,13 @@ def _render_primitive(primitive: ConstructivePrimitive, volume_tag: int) -> list
         start, vector = _start_and_vector(primitive.center_m, primitive.axis, height)
         outer_tag = volume_tag + 1
         inner_tag = volume_tag + 2
-        lines.extend([
-            f"Cylinder({outer_tag}) = {{{_fmt(start[0])}, {_fmt(start[1])}, {_fmt(start[2])}, {_fmt(vector[0])}, {_fmt(vector[1])}, {_fmt(vector[2])}, {_fmt(outer)}}};",
-            f"Cylinder({inner_tag}) = {{{_fmt(start[0])}, {_fmt(start[1])}, {_fmt(start[2])}, {_fmt(vector[0])}, {_fmt(vector[1])}, {_fmt(vector[2])}, {_fmt(inner)}}};",
-            f"BooleanDifference({volume_tag}) = {{ Volume{{{outer_tag}}}; Delete; }}{{ Volume{{{inner_tag}}}; Delete; }};",
-        ])
+        lines.extend(
+            [
+                f"Cylinder({outer_tag}) = {{{_fmt(start[0])}, {_fmt(start[1])}, {_fmt(start[2])}, {_fmt(vector[0])}, {_fmt(vector[1])}, {_fmt(vector[2])}, {_fmt(outer)}}};",
+                f"Cylinder({inner_tag}) = {{{_fmt(start[0])}, {_fmt(start[1])}, {_fmt(start[2])}, {_fmt(vector[0])}, {_fmt(vector[1])}, {_fmt(vector[2])}, {_fmt(inner)}}};",
+                f"BooleanDifference({volume_tag}) = {{ Volume{{{outer_tag}}}; Delete; }}{{ Volume{{{inner_tag}}}; Delete; }};",
+            ]
+        )
         return lines
 
     if primitive.kind == ConstructivePrimitiveKind.WINDING_ENVELOPE:
@@ -195,11 +237,13 @@ def _render_primitive(primitive: ConstructivePrimitive, volume_tag: int) -> list
         start, vector = _start_and_vector(primitive.center_m, primitive.axis, length)
         outer_tag = volume_tag + 1
         inner_tag = volume_tag + 2
-        lines.extend([
-            f"Cylinder({outer_tag}) = {{{_fmt(start[0])}, {_fmt(start[1])}, {_fmt(start[2])}, {_fmt(vector[0])}, {_fmt(vector[1])}, {_fmt(vector[2])}, {_fmt(outer)}}};",
-            f"Cylinder({inner_tag}) = {{{_fmt(start[0])}, {_fmt(start[1])}, {_fmt(start[2])}, {_fmt(vector[0])}, {_fmt(vector[1])}, {_fmt(vector[2])}, {_fmt(inner)}}};",
-            f"BooleanDifference({volume_tag}) = {{ Volume{{{outer_tag}}}; Delete; }}{{ Volume{{{inner_tag}}}; Delete; }};",
-        ])
+        lines.extend(
+            [
+                f"Cylinder({outer_tag}) = {{{_fmt(start[0])}, {_fmt(start[1])}, {_fmt(start[2])}, {_fmt(vector[0])}, {_fmt(vector[1])}, {_fmt(vector[2])}, {_fmt(outer)}}};",
+                f"Cylinder({inner_tag}) = {{{_fmt(start[0])}, {_fmt(start[1])}, {_fmt(start[2])}, {_fmt(vector[0])}, {_fmt(vector[1])}, {_fmt(vector[2])}, {_fmt(inner)}}};",
+                f"BooleanDifference({volume_tag}) = {{ Volume{{{outer_tag}}}; Delete; }}{{ Volume{{{inner_tag}}}; Delete; }};",
+            ]
+        )
         return lines
 
     if primitive.kind == ConstructivePrimitiveKind.PROBE_POINT:
@@ -234,18 +278,113 @@ def build_gmsh_manifest(topology: RigConstructiveTopology, config: RigGmshConfig
     )
 
 
-def render_complete_rig_geo(topology: RigConstructiveTopology, config: RigGmshConfig) -> tuple[str, RigGmshManifest]:
+def _local_mesh_size_lines(
+    topology: RigConstructiveTopology,
+    manifest: RigGmshManifest,
+    config: RigGmshConfig,
+) -> list[str]:
+    primitive_by_id = {primitive.primitive_id: primitive for primitive in topology.primitives}
+    lines: list[str] = []
+
+    def volume_tags(kind: ConstructivePrimitiveKind | None = None, component_id: str | None = None) -> list[int]:
+        result: list[int] = []
+        for region in manifest.physical_regions:
+            primitive = primitive_by_id[region.primitive_id]
+            if kind is not None and primitive.kind != kind:
+                continue
+            if component_id is not None and primitive.component_id != component_id:
+                continue
+            result.append(region.volume_tag)
+        return result
+
+    refinements = (
+        (
+            "winding envelopes",
+            config.winding_characteristic_length_m,
+            volume_tags(kind=ConstructivePrimitiveKind.WINDING_ENVELOPE),
+        ),
+        (
+            "steel frame",
+            config.steel_characteristic_length_m,
+            volume_tags(component_id="steel_frame"),
+        ),
+    )
+    for label, size, tags in refinements:
+        if size is None:
+            continue
+        if not tags:
+            raise ValueError(f"local mesh refinement requested but no {label} volumes exist")
+        tag_list = ", ".join(str(tag) for tag in tags)
+        lines.extend(
+            [
+                f"// Local target mesh size on {label}; retained volume tags are validated after OCC fragmentation.",
+                f"MeshSize{{ PointsOf{{ Volume{{{tag_list}}}; }} }} = {_fmt(size)};",
+            ]
+        )
+    return lines
+
+
+def _far_field_mesh_size_lines(
+    topology: RigConstructiveTopology,
+    config: RigGmshConfig,
+) -> list[str]:
+    far_size = config.far_field_characteristic_length_m
+    if far_size is None:
+        return []
+    # The outer air box intentionally enforces a minimum absolute padding so even thin axes have
+    # enough clearance for the truncation boundary. Reusing that same minimum for the inner grading
+    # box can make the two boxes coincide on a thin axis (the failure seen in CI run #154). The near
+    # box is a numerical mesh-control region, not a physical boundary, so its padding is defined only
+    # by the retained topology fraction. A positive topology extent guarantees non-zero clearance.
+    near_bounds = _padded_topology_bounds(
+        topology,
+        config.far_field_near_margin_fraction,
+        0.0,
+    )
+    outer_bounds = topology_air_bounds(topology, config)
+    if not all(
+        outer_bounds[index] < near_bounds[index] < near_bounds[index + 1] < outer_bounds[index + 1]
+        for index in (0, 2, 4)
+    ):
+        raise ValueError("far-field near box must lie strictly inside the outer air box")
+    xmin, xmax, ymin, ymax, zmin, zmax = near_bounds
+    tag = FAR_FIELD_MESH_FIELD_TAG
+    return [
+        "// Fixed near-Rig resolution with a graded coarse far field. The near box depends only",
+        "// on the material topology, so enlarging the outer air domain does not intentionally",
+        "// coarsen the region containing the Rig and convergence probes.",
+        f"Field[{tag}] = Box;",
+        f"Field[{tag}].VIn = {_fmt(config.characteristic_length_m)};",
+        f"Field[{tag}].VOut = {_fmt(far_size)};",
+        f"Field[{tag}].XMin = {_fmt(xmin)};",
+        f"Field[{tag}].XMax = {_fmt(xmax)};",
+        f"Field[{tag}].YMin = {_fmt(ymin)};",
+        f"Field[{tag}].YMax = {_fmt(ymax)};",
+        f"Field[{tag}].ZMin = {_fmt(zmin)};",
+        f"Field[{tag}].ZMax = {_fmt(zmax)};",
+        f"Field[{tag}].Thickness = {_fmt(config.far_field_transition_m)};",
+        f"Background Field = {tag};",
+    ]
+
+
+def render_complete_rig_geo(
+    topology: RigConstructiveTopology, config: RigGmshConfig
+) -> tuple[str, RigGmshManifest]:
     manifest = build_gmsh_manifest(topology, config)
+    maximum_characteristic_length = (
+        config.far_field_characteristic_length_m or config.characteristic_length_m
+    )
     lines = [
-        "// PVL-2P complete-Rig exploratory Gmsh geometry.",
+        "// PVL complete-Rig exploratory Gmsh geometry.",
         "// Ordinary geometry/meshing only. No GetDP solve and no Portal Hypothesis term.",
         'SetFactory("OpenCASCADE");',
         "Geometry.OCCBooleanPreserveNumbering = 1;",
         f"Mesh.MshFileVersion = {config.msh_version};",
         "Mesh.ElementOrder = 1;",
         f"Mesh.CharacteristicLengthMin = {_fmt(config.minimum_characteristic_length_m)};",
-        f"Mesh.CharacteristicLengthMax = {_fmt(config.characteristic_length_m)};",
+        f"Mesh.CharacteristicLengthMax = {_fmt(maximum_characteristic_length)};",
         "Mesh.MeshSizeFromCurvature = 0;",
+        "Mesh.MeshSizeFromPoints = 1;",
         "Mesh.MeshSizeExtendFromBoundary = 1;",
         "",
     ]
@@ -258,29 +397,69 @@ def render_complete_rig_geo(topology: RigConstructiveTopology, config: RigGmshCo
         lines.append("")
 
     xmin, xmax, ymin, ymax, zmin, zmax = manifest.air_bounds_m
-    lines.extend([
-        "// Surrounding air before conformal fragmentation.",
-        f"Box({AIR_SOURCE_TAG}) = {{{_fmt(xmin)}, {_fmt(ymin)}, {_fmt(zmin)}, {_fmt(xmax - xmin)}, {_fmt(ymax - ymin)}, {_fmt(zmax - zmin)}}};",
-        f"BooleanDifference({AIR_VOLUME_TAG}) = {{ Volume{{{AIR_SOURCE_TAG}}}; Delete; }}{{ Volume{{{','.join(str(region.volume_tag) for region in manifest.physical_regions)}}}; }};",
-        "",
-        "// Fragment retained material volumes against the air cavity interfaces so later FEM",
-        "// formulations see one conformal topological model. OCC numbering preservation is",
-        "// validated by PVL's physical-region mesh gate below.",
-        f"allFragments() = BooleanFragments{{ Volume{{{AIR_VOLUME_TAG}}}; Delete; }}{{ Volume{{{','.join(str(region.volume_tag) for region in manifest.physical_regions)}}}; Delete; }};",
-        "",
-        f'Physical Volume("{manifest.air_physical_name}", {manifest.air_physical_tag}) = {{{manifest.air_volume_tag}}};',
-    ])
+    volume_tags = ",".join(str(region.volume_tag) for region in manifest.physical_regions)
+    extent = max(xmax - xmin, ymax - ymin, zmax - zmin)
+    # OpenCASCADE entity bounding boxes include kernel tolerances. Keep this selection slab much
+    # wider than that numerical fuzz while remaining orders of magnitude inside the retained
+    # >=50 mm air padding, so internal material interfaces cannot be selected.
+    boundary_eps = max(1e-6, extent * 1e-5)
+    lines.extend(
+        [
+            "// Surrounding air before conformal fragmentation.",
+            f"Box({AIR_SOURCE_TAG}) = {{{_fmt(xmin)}, {_fmt(ymin)}, {_fmt(zmin)}, {_fmt(xmax - xmin)}, {_fmt(ymax - ymin)}, {_fmt(zmax - zmin)}}};",
+            f"BooleanDifference({AIR_VOLUME_TAG}) = {{ Volume{{{AIR_SOURCE_TAG}}}; Delete; }}{{ Volume{{{volume_tags}}}; }};",
+            "",
+            "// Fragment retained material volumes against the air cavity interfaces so later FEM",
+            "// formulations see one conformal topological model. OCC numbering preservation is",
+            "// validated by PVL's physical-region mesh gate.",
+            f"allFragments() = BooleanFragments{{ Volume{{{AIR_VOLUME_TAG}}}; Delete; }}{{ Volume{{{volume_tags}}}; Delete; }};",
+            "",
+        ]
+    )
+    local_mesh_lines = _local_mesh_size_lines(topology, manifest, config)
+    if local_mesh_lines:
+        lines.extend(
+            [
+                "// Targeted local refinement resolves the prescribed current source and high-mu steel",
+                "// without forcing the entire truncated air domain to the same small element size.",
+                *local_mesh_lines,
+                "",
+            ]
+        )
+    far_field_lines = _far_field_mesh_size_lines(topology, config)
+    if far_field_lines:
+        lines.extend([*far_field_lines, ""])
+    lines.extend(
+        [
+            "// PVL-2Q identifies only the six external faces of the padded air box. Material",
+            "// interfaces cannot enter these bounding slabs because all material primitives are",
+            "// strictly contained by the air padding and were checked by PVL-2P.",
+            f"bndEps = {_fmt(boundary_eps)};",
+            "outerBnd() = {};",
+            f"outerBnd() += Surface In BoundingBox{{{_fmt(xmin - boundary_eps)}, {_fmt(ymin - boundary_eps)}, {_fmt(zmin - boundary_eps)}, {_fmt(xmin + boundary_eps)}, {_fmt(ymax + boundary_eps)}, {_fmt(zmax + boundary_eps)}}};",
+            f"outerBnd() += Surface In BoundingBox{{{_fmt(xmax - boundary_eps)}, {_fmt(ymin - boundary_eps)}, {_fmt(zmin - boundary_eps)}, {_fmt(xmax + boundary_eps)}, {_fmt(ymax + boundary_eps)}, {_fmt(zmax + boundary_eps)}}};",
+            f"outerBnd() += Surface In BoundingBox{{{_fmt(xmin - boundary_eps)}, {_fmt(ymin - boundary_eps)}, {_fmt(zmin - boundary_eps)}, {_fmt(xmax + boundary_eps)}, {_fmt(ymin + boundary_eps)}, {_fmt(zmax + boundary_eps)}}};",
+            f"outerBnd() += Surface In BoundingBox{{{_fmt(xmin - boundary_eps)}, {_fmt(ymax - boundary_eps)}, {_fmt(zmin - boundary_eps)}, {_fmt(xmax + boundary_eps)}, {_fmt(ymax + boundary_eps)}, {_fmt(zmax + boundary_eps)}}};",
+            f"outerBnd() += Surface In BoundingBox{{{_fmt(xmin - boundary_eps)}, {_fmt(ymin - boundary_eps)}, {_fmt(zmin - boundary_eps)}, {_fmt(xmax + boundary_eps)}, {_fmt(ymax + boundary_eps)}, {_fmt(zmin + boundary_eps)}}};",
+            f"outerBnd() += Surface In BoundingBox{{{_fmt(xmin - boundary_eps)}, {_fmt(ymin - boundary_eps)}, {_fmt(zmax - boundary_eps)}, {_fmt(xmax + boundary_eps)}, {_fmt(ymax + boundary_eps)}, {_fmt(zmax + boundary_eps)}}};",
+            "",
+            f'Physical Volume("{manifest.air_physical_name}", {manifest.air_physical_tag}) = {{{manifest.air_volume_tag}}};',
+        ]
+    )
     for region in manifest.physical_regions:
         lines.append(
             f'Physical Volume("{region.physical_name}", {region.physical_tag}) = {{{region.volume_tag}}};'
         )
-    lines.extend([
-        "",
-        "// MSH2 stores physical-volume membership used by PVL's mesh integrity parser.",
-        "Mesh.SaveAll = 0;",
-        "Mesh.Optimize = 1;",
-        "",
-    ])
+    lines.extend(
+        [
+            f'Physical Surface("{manifest.outer_boundary_physical_name}", {manifest.outer_boundary_physical_tag}) = {{outerBnd()}};',
+            "",
+            "// MSH2 stores physical membership used by PVL's independent integrity parsers.",
+            "Mesh.SaveAll = 0;",
+            "Mesh.Optimize = 1;",
+            "",
+        ]
+    )
     return "\n".join(lines), manifest
 
 

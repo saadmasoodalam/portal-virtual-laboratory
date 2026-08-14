@@ -44,6 +44,49 @@ def test_complete_rig_geo_is_deterministic_and_contains_only_geometry_mesh_comma
     assert "Formulation" not in first
 
 
+def test_graded_far_field_keeps_fixed_near_box_and_allows_coarser_outer_air():
+    topology = compile_constructive_topology(architecture_example_rig_v1())
+    text_75, _ = render_complete_rig_geo(
+        topology,
+        RigGmshConfig(
+            characteristic_length_m=0.012,
+            air_margin_fraction=0.75,
+            far_field_characteristic_length_m=0.040,
+            far_field_near_margin_fraction=0.25,
+            far_field_transition_m=0.10,
+        ),
+    )
+    text_100, _ = render_complete_rig_geo(
+        topology,
+        RigGmshConfig(
+            characteristic_length_m=0.012,
+            air_margin_fraction=1.00,
+            far_field_characteristic_length_m=0.040,
+            far_field_near_margin_fraction=0.25,
+            far_field_transition_m=0.10,
+        ),
+    )
+    assert "Mesh.CharacteristicLengthMax = 0.040000000000000001" in text_75
+    assert "Field[1] = Box;" in text_75
+    assert "Field[1].VIn = 0.012" in text_75
+    assert "Field[1].VOut = 0.040000000000000001" in text_75
+    assert "Field[1].Thickness = 0.10000000000000001" in text_75
+    assert "Background Field = 1;" in text_75
+    near_box_lines_75 = [line for line in text_75.splitlines() if line.startswith("Field[1].")]
+    near_box_lines_100 = [line for line in text_100.splitlines() if line.startswith("Field[1].")]
+    assert near_box_lines_75 == near_box_lines_100
+
+
+def test_far_field_configuration_rejects_near_box_outside_air_domain():
+    with pytest.raises(ValueError, match="near margin"):
+        RigGmshConfig(
+            characteristic_length_m=0.012,
+            air_margin_fraction=0.50,
+            far_field_characteristic_length_m=0.040,
+            far_field_near_margin_fraction=0.50,
+        )
+
+
 def test_air_box_strictly_contains_every_material_primitive():
     topology = compile_constructive_topology(architecture_example_rig_v1())
     _, manifest = render_complete_rig_geo(topology, RigGmshConfig())
