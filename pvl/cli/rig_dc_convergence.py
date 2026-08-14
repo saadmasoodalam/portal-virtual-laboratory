@@ -39,28 +39,30 @@ def main() -> int:
         notes="PVL-2Q exploratory complete-Rig numerical convergence state",
     )
     try:
-        # Run #150 showed that exact point probes removed the line-interpolation confound, but the
-        # 75% -> 100% outer-domain comparison still moved materially while the direct solve became
-        # very expensive. Keep the retained 20/15/12 mm near-Rig sequence plus 2 mm winding and
-        # 5 mm steel refinement, while grading only distant air toward 40 mm. The fixed 25% near
-        # box is identical across the 50/75/100% domain sequence, so enlargement changes the
-        # truncation boundary without intentionally coarsening the Rig/probe region. The 3%
-        # acceptance limits remain unchanged.
+        # Run #163 established that finite-aperture averaging removes much of the first-order
+        # H(curl) element-membership noise, but 15 -> 12 mm remained outside the retained 3% gate
+        # (5.46% probe, 6.78% center) and the 75% -> 100% air-domain probe comparison remained
+        # 12.33%. That means the old sequence was still pre-asymptotic; the correct response is a
+        # finer mesh and a farther truncation boundary, not a weaker tolerance. Distant air remains
+        # graded to 40 mm and the winding/steel local targets stay fixed so the extra cost is spent
+        # where the field observable is sensitive.
         mesh_points, domain_points, gate = run_rig_dc_mesh_and_domain_convergence(
             experiment,
             topology,
             materials,
             Path(args.output),
-            mesh_sizes_m=(0.020, 0.015, 0.012),
-            air_margins=(0.50, 0.75, 1.00),
-            shared_mesh_size_m=0.012,
-            shared_air_margin=0.75,
+            mesh_sizes_m=(0.012, 0.010, 0.008),
+            air_margins=(1.00, 1.25, 1.50),
+            shared_mesh_size_m=0.008,
+            shared_air_margin=1.25,
             winding_mesh_size_m=0.002,
             steel_mesh_size_m=0.005,
             far_field_mesh_size_m=0.040,
             far_field_near_margin_fraction=0.25,
             far_field_transition_m=0.10,
             probe_y_m=(-0.060, -0.030, 0.0, 0.030, 0.060),
+            probe_window_half_width_m=0.005,
+            probe_window_samples=21,
         )
     except SolverUnavailableError as exc:
         print(f"PVL complete-Rig DC convergence status: NOT READY — {exc}")
