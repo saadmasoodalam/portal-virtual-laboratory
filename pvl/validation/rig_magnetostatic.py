@@ -177,10 +177,11 @@ def run_rig_dc_mesh_and_domain_convergence(
     materials: MaterialLibrary,
     output_dir: Path,
     *,
-    # h=0.05 m was experimentally rejected by Gmsh 4.12.1 for this thin exploratory
-    # topology: it emitted only a surface mesh and returned nonzero. Retain levels at and
-    # below the already validated h=0.04 complete-Rig mesh instead of weakening geometry gates.
-    mesh_sizes_m: tuple[float, ...] = (0.04, 0.035, 0.03),
+    # Gmsh 4.12.1 was observed to emit a surface-only partial mesh for this thin exploratory
+    # topology at h=0.05 m and h=0.03 m. Those are meshing-algorithm failure points, not field
+    # convergence data. Retain three nearby levels that remain below the validated h=0.04 mesh
+    # ceiling without weakening any topology or quality gate.
+    mesh_sizes_m: tuple[float, ...] = (0.04, 0.035, 0.032),
     air_margins: tuple[float, ...] = (0.25, 0.35, 0.50),
     shared_mesh_size_m: float = 0.04,
     shared_air_margin: float = 0.35,
