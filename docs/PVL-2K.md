@@ -16,7 +16,7 @@ Supported drive modes are `off`, `dc`, and `harmonic`. DC uses a positive curren
 
 `POST /api/v1/experiment/template` creates a solver-disabled experiment draft tied to the exact Rig-definition fingerprint and active material-library fingerprint. Sample medium and copper-boundary state are derived from the Rig. Both coils begin OFF; no active current or frequency is invented.
 
-`POST /api/v1/experiment/validate` validates the experiment model and returns its deterministic physics-state hash with `solver_execution = false`.
+`POST /api/v1/experiment/validate` validates the experiment model and returns both the deterministic full configuration hash and the physics-state hash with `solver_execution = false`.
 
 ## Browser editor
 
