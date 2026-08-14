@@ -20,6 +20,8 @@ from pvl.solvers.getdp.runner import ExecutableSet, discover_executables, run_ge
 class RigMagnetostaticResult:
     y_m: np.ndarray
     b_y_t: np.ndarray
+    probe_y_m: np.ndarray
+    probe_b_y_t: np.ndarray
     mesh_run: RigMeshRun
     pro_path: Path
     source_ampere_turns: tuple[float, float]
@@ -42,6 +44,35 @@ def _axis_metrics(y_m: np.ndarray, b_y_t: np.ndarray) -> dict[str, float]:
     }
 
 
+def _read_exact_probes(
+    output_dir: Path,
+    requested_y_m: tuple[float, ...],
+) -> tuple[np.ndarray, np.ndarray]:
+    if not requested_y_m:
+        return np.asarray([], dtype=float), np.asarray([], dtype=float)
+
+    y_values: list[float] = []
+    b_values: list[float] = []
+    for index, expected_y in enumerate(requested_y_m):
+        path = output_dir / f"b_probe_{index:03d}.txt"
+        if not path.is_file() or path.stat().st_size == 0:
+            raise RuntimeError(f"GetDP completed without producing exact probe file: {path.name}")
+        y_m, b_y_t = parse_getdp_axis_table(path)
+        if y_m.size != 1 or b_y_t.size != 1:
+            raise RuntimeError(f"exact complete-Rig point probe did not produce one sample: {path.name}")
+        if not np.isclose(y_m[0], expected_y, rtol=0.0, atol=1e-10):
+            raise RuntimeError(
+                f"exact complete-Rig point probe coordinate mismatch: {path.name} "
+                f"expected {expected_y:.17g}, got {y_m[0]:.17g}"
+            )
+        if not np.isfinite(b_y_t[0]):
+            raise RuntimeError(f"exact complete-Rig point probe is non-finite: {path.name}")
+        y_values.append(float(y_m[0]))
+        b_values.append(float(b_y_t[0]))
+
+    return np.asarray(y_values, dtype=float), np.asarray(b_values, dtype=float)
+
+
 def run_complete_rig_dc_magnetostatic(
     experiment: ExperimentConfig,
     topology: RigConstructiveTopology,
@@ -51,6 +82,7 @@ def run_complete_rig_dc_magnetostatic(
     *,
     executables: ExecutableSet | None = None,
     axis_samples: int = 101,
+    probe_y_m: tuple[float, ...] = (),
 ) -> RigMagnetostaticResult:
     """Mesh and solve exactly one ordinary-physics complete-Rig DC state.
 
@@ -86,6 +118,7 @@ def run_complete_rig_dc_magnetostatic(
         materials,
         output_dir / "rig_dc.pro",
         axis_samples=axis_samples,
+        probe_y_m=probe_y_m,
     )
     run = run_getdp(
         pro_path,
@@ -106,7 +139,13 @@ def run_complete_rig_dc_magnetostatic(
     if not axis_file.is_file() or axis_file.stat().st_size == 0:
         raise RuntimeError("GetDP completed without producing complete-Rig b_axis.txt")
     y_m, b_y_t = parse_getdp_axis_table(axis_file)
+    exact_probe_y_m, exact_probe_b_y_t = _read_exact_probes(output_dir, probe_y_m)
     metrics = _axis_metrics(y_m, b_y_t)
+    if exact_probe_b_y_t.size:
+        metrics["probe_peak_abs_b_t"] = float(np.max(np.abs(exact_probe_b_y_t)))
+        zero_indices = np.flatnonzero(np.isclose(exact_probe_y_m, 0.0, rtol=0.0, atol=1e-14))
+        if zero_indices.size == 1:
+            metrics["probe_center_b_y_t"] = float(exact_probe_b_y_t[int(zero_indices[0])])
     if metrics["axis_peak_abs_b_t"] <= 0.0 and any(
         abs(value) > 0.0 for value in (source_a.ampere_turns, source_b.ampere_turns)
     ):
@@ -136,6 +175,10 @@ def run_complete_rig_dc_magnetostatic(
             }
             for source in (source_a, source_b)
         ],
+        "exact_probes": [
+            {"y_m": float(y_value), "b_y_t": float(b_value)}
+            for y_value, b_value in zip(exact_probe_y_m, exact_probe_b_y_t)
+        ],
         "mesh_gate": mesh_run.gate.model_dump(mode="json"),
         "metrics": metrics,
         "scientific_boundary": (
@@ -149,6 +192,8 @@ def run_complete_rig_dc_magnetostatic(
     return RigMagnetostaticResult(
         y_m=y_m,
         b_y_t=b_y_t,
+        probe_y_m=exact_probe_y_m,
+        probe_b_y_t=exact_probe_b_y_t,
         mesh_run=mesh_run,
         pro_path=pro_path,
         source_ampere_turns=(source_a.ampere_turns, source_b.ampere_turns),
