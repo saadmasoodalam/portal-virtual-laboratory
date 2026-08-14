@@ -119,6 +119,9 @@ def render_rig_magnetostatic_pro(
     *,
     axis_samples: int = 101,
     probe_y_m: tuple[float, ...] = (),
+    probe_box_y_m: tuple[float, ...] = (),
+    probe_box_half_width_m: float = 0.002,
+    probe_box_divisions: tuple[int, int, int] = (4, 4, 4),
 ) -> str:
     if axis_samples < 3:
         raise ValueError("axis_samples must be at least 3")
@@ -128,6 +131,12 @@ def render_rig_magnetostatic_pro(
         raise ValueError("experiment Rig fingerprint does not match constructive topology")
     if manifest.source_rig_fingerprint != topology.source_rig_fingerprint:
         raise ValueError("Gmsh manifest Rig fingerprint does not match constructive topology")
+    if probe_box_y_m and probe_box_half_width_m <= 0.0:
+        raise ValueError("complete-Rig sensor-volume half-width must be positive")
+    if probe_box_y_m and (
+        len(probe_box_divisions) != 3 or any(value < 1 for value in probe_box_divisions)
+    ):
+        raise ValueError("complete-Rig sensor-volume OnBox divisions must contain three positive integers")
 
     source_a, source_b = build_winding_sources(experiment, topology, manifest)
     all_volume_tags = [manifest.air_physical_tag] + [item.physical_tag for item in manifest.physical_regions]
@@ -173,7 +182,30 @@ def render_rig_magnetostatic_pro(
             f'      Print[b, OnPoint {{{px:.17g}, {probe_y:.17g}, {pz:.17g}}}, '
             f'Format Table, File "b_probe_{index:03d}.txt"];'
         )
-    probe_block = "\n".join(probe_lines)
+
+    box_lines: list[str] = []
+    half = probe_box_half_width_m
+    nx, ny, nz = probe_box_divisions
+    for index, probe_y in enumerate(probe_box_y_m):
+        if not isfinite(probe_y):
+            raise ValueError("complete-Rig sensor-volume center must be finite")
+        if not (ymin < probe_y - half and probe_y + half < ymax):
+            raise ValueError("complete-Rig sensor volume lies outside the padded air-domain Y bounds")
+        p0 = (px - half, probe_y - half, pz - half)
+        p1 = (px + half, probe_y - half, pz - half)
+        p2 = (px - half, probe_y + half, pz - half)
+        p3 = (px - half, probe_y - half, pz + half)
+        box_lines.append(
+            "      Print[b, OnBox {"
+            f" {{{p0[0]:.17g}, {p0[1]:.17g}, {p0[2]:.17g}}}"
+            f" {{{p1[0]:.17g}, {p1[1]:.17g}, {p1[2]:.17g}}}"
+            f" {{{p2[0]:.17g}, {p2[1]:.17g}, {p2[2]:.17g}}}"
+            f" {{{p3[0]:.17g}, {p3[1]:.17g}, {p3[2]:.17g}}}"
+            f" }} {{{nx}, {ny}, {nz}}}, Format Table, File \"b_probe_box_{index:03d}.txt\"] ;"
+        )
+
+    post_lines = [*probe_lines, *box_lines]
+    probe_block = "\n".join(post_lines)
     if probe_block:
         probe_block += "\n"
 
@@ -181,7 +213,7 @@ def render_rig_magnetostatic_pro(
 // Established magnetostatics only: curl(nu curl a) = js.
 // Homogenized winding sources use J = N I / A_pack and analytic divergence-free azimuthal flow.
 // Coil geometric normals do not define electrical polarity; +polarity is global +Y for both coils.
-// Fixed convergence probes use GetDP OnPoint evaluation, not interpolation from a changing line grid.
+// Convergence sensor volumes use fixed GetDP OnBox sampling; they do not modify the FEM equation.
 // No eddy-current, thermal, anomaly, biological or Portal Hypothesis term is present.
 
 Group {{
@@ -310,6 +342,9 @@ def write_rig_magnetostatic_pro(
     *,
     axis_samples: int = 101,
     probe_y_m: tuple[float, ...] = (),
+    probe_box_y_m: tuple[float, ...] = (),
+    probe_box_half_width_m: float = 0.002,
+    probe_box_divisions: tuple[int, int, int] = (4, 4, 4),
 ) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -320,6 +355,9 @@ def write_rig_magnetostatic_pro(
             materials,
             axis_samples=axis_samples,
             probe_y_m=probe_y_m,
+            probe_box_y_m=probe_box_y_m,
+            probe_box_half_width_m=probe_box_half_width_m,
+            probe_box_divisions=probe_box_divisions,
         ),
         encoding="utf-8",
     )
