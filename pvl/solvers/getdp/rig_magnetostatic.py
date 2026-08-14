@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import isclose
+from math import isclose, isfinite
 from pathlib import Path
 
 from pvl.experiments.models import DriveMode, ExperimentConfig
@@ -118,6 +118,7 @@ def render_rig_magnetostatic_pro(
     materials: MaterialLibrary,
     *,
     axis_samples: int = 101,
+    probe_y_m: tuple[float, ...] = (),
 ) -> str:
     if axis_samples < 3:
         raise ValueError("axis_samples must be at least 3")
@@ -162,10 +163,25 @@ def render_rig_magnetostatic_pro(
     line_y0 = ymin + line_margin
     line_y1 = ymax - line_margin
 
+    probe_lines: list[str] = []
+    for index, probe_y in enumerate(probe_y_m):
+        if not isfinite(probe_y):
+            raise ValueError("complete-Rig point probe coordinate must be finite")
+        if not (ymin < probe_y < ymax):
+            raise ValueError("complete-Rig point probe lies outside the padded air-domain Y bounds")
+        probe_lines.append(
+            f'      Print[b, OnPoint {{{px:.17g}, {probe_y:.17g}, {pz:.17g}}}, '
+            f'Format Table, File "b_probe_{index:03d}.txt"];'
+        )
+    probe_block = "\n".join(probe_lines)
+    if probe_block:
+        probe_block += "\n"
+
     return f'''// PVL-2Q complete-Rig 3D DC magnetostatic formulation.
 // Established magnetostatics only: curl(nu curl a) = js.
 // Homogenized winding sources use J = N I / A_pack and analytic divergence-free azimuthal flow.
 // Coil geometric normals do not define electrical polarity; +polarity is global +Y for both coils.
+// Fixed convergence probes use GetDP OnPoint evaluation, not interpolation from a changing line grid.
 // No eddy-current, thermal, anomaly, biological or Portal Hypothesis term is present.
 
 Group {{
@@ -278,7 +294,7 @@ PostOperation {{
     Operation {{
       Print[b, OnLine{{{{{px:.17g}, {line_y0:.17g}, {pz:.17g}}}{{{px:.17g}, {line_y1:.17g}, {pz:.17g}}}}}{{{axis_samples}}},
         Format Table, File "b_axis.txt"];
-      Print[sourceJ, OnElementsOf Vol_S_Mag, File "source_j.pos"];
+{probe_block}      Print[sourceJ, OnElementsOf Vol_S_Mag, File "source_j.pos"];
     }}
   }}
 }}
@@ -293,6 +309,7 @@ def write_rig_magnetostatic_pro(
     path: Path,
     *,
     axis_samples: int = 101,
+    probe_y_m: tuple[float, ...] = (),
 ) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -302,6 +319,7 @@ def write_rig_magnetostatic_pro(
             manifest,
             materials,
             axis_samples=axis_samples,
+            probe_y_m=probe_y_m,
         ),
         encoding="utf-8",
     )
