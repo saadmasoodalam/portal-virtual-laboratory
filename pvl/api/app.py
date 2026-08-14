@@ -6,6 +6,7 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from pvl.api.matrix_jobs import build_matrix_jobs_router
 from pvl.experiments.models import (
     BoundaryCircuitState,
     CoilDriveState,
@@ -446,6 +447,7 @@ def create_app(materials: MaterialLibrary | None = None, results_root: Path | No
             summary_file=manifest.summary_file,
         )
 
+    application.include_router(build_matrix_jobs_router(materials=library, results_root=storage_root))
     return application
 
 
