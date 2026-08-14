@@ -27,8 +27,14 @@ from pvl.orchestrator.execution import (
     evaluate_and_persist_single_run_gate,
 )
 from pvl.orchestrator.preflight import SolverRoute
+from pvl.orchestrator.scientific_execution import (
+    ScientificExecutionBlockedError,
+    execute_and_persist_single_run,
+    exploratory_complete_rig_dc_mesh_profile,
+)
 from pvl.rig.fingerprint import rig_definition_fingerprint
 from pvl.rig.schema import ReadinessReport, RigV1Schema
+from pvl.solvers.getdp.runner import SolverExecutionError, SolverUnavailableError
 
 
 class PreviewProvenance(BaseModel):
@@ -139,6 +145,29 @@ class SingleRunGateResponse(BaseModel):
     biological_testing: bool
     issues: tuple[ExecutionGateIssue, ...]
     relative_execution_path: str
+
+
+class ScientificRunResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    job_id: str
+    job_fingerprint: str
+    package_id: str
+    run_id: str
+    solver_route: SolverRoute
+    package_integrity_verified: bool
+    preflight_ready: bool
+    execution_allowed: bool
+    solver_execution: bool
+    single_run_only: bool
+    batch_execution: bool
+    biological_testing: bool
+    hypothesis_analysis: bool
+    physical_validation: bool
+    geometry_fidelity: str
+    mesh_configuration_hash: str
+    relative_execution_path: str
+    metrics_file: str
+    summary_file: str
 
 
 def _experiment_medium(rig: RigV1Schema) -> SampleMedium:
@@ -344,6 +373,77 @@ def create_app(materials: MaterialLibrary | None = None, results_root: Path | No
             biological_testing=manifest.biological_testing,
             issues=manifest.issues,
             relative_execution_path=str(Path(result.root).relative_to(storage_root)),
+        )
+
+    @application.post("/api/v1/experiment/execution/single/run", response_model=ScientificRunResponse)
+    def experiment_single_run_execute(request: SingleRunGateRequest) -> ScientificRunResponse:
+        package_root = storage_root / request.experiment_id / "packages" / request.package_id
+        try:
+            result = execute_and_persist_single_run(
+                package_root=package_root,
+                run_id=request.run_id,
+                rig=request.rig,
+                materials=library,
+                results_root=storage_root,
+                mesh_config=exploratory_complete_rig_dc_mesh_profile(),
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "experiment_package_not_found", "message": str(exc)},
+            ) from exc
+        except PlannedRunNotFoundError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "planned_run_not_found", "message": str(exc)},
+            ) from exc
+        except PackageIntegrityError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "experiment_package_integrity_failed", "message": str(exc)},
+            ) from exc
+        except ScientificExecutionBlockedError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": exc.code, "message": str(exc)},
+            ) from exc
+        except FileExistsError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "scientific_run_exists", "message": str(exc)},
+            ) from exc
+        except (SolverUnavailableError, SolverExecutionError) as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={"code": "solver_execution_failed", "message": str(exc)},
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "constructive_geometry_invalid", "message": str(exc)},
+            ) from exc
+
+        manifest = result.manifest
+        return ScientificRunResponse(
+            job_id=manifest.job_id,
+            job_fingerprint=manifest.job_fingerprint,
+            package_id=manifest.package_id,
+            run_id=manifest.run_id,
+            solver_route=manifest.solver_route,
+            package_integrity_verified=manifest.package_integrity_verified,
+            preflight_ready=manifest.preflight_ready,
+            execution_allowed=manifest.execution_allowed,
+            solver_execution=manifest.solver_execution,
+            single_run_only=manifest.single_run_only,
+            batch_execution=manifest.batch_execution,
+            biological_testing=manifest.biological_testing,
+            hypothesis_analysis=manifest.hypothesis_analysis,
+            physical_validation=manifest.physical_validation,
+            geometry_fidelity=manifest.geometry_fidelity,
+            mesh_configuration_hash=manifest.mesh_configuration_hash,
+            relative_execution_path=str(Path(result.root).relative_to(storage_root)),
+            metrics_file=manifest.metrics_file,
+            summary_file=manifest.summary_file,
         )
 
     return application
