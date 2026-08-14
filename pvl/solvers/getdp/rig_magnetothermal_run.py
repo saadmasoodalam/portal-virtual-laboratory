@@ -11,7 +11,6 @@ from pvl.geometry.constructive import RigConstructiveTopology
 from pvl.geometry.gmsh_rig import RigGmshConfig
 from pvl.geometry.gmsh_rig_run import RigMeshRun, run_complete_rig_mesh
 from pvl.materials.library import MaterialLibrary
-from pvl.solvers.getdp.poc005_run import parse_getdp_global_real, parse_getdp_real_scalar_line
 from pvl.solvers.getdp.rig_magnetothermal import write_rig_magnetothermal_pro
 from pvl.solvers.getdp.rig_magnetoquasistatic import (
     RigMagnetoquasistaticModel,
@@ -34,6 +33,56 @@ class RigMagnetothermalResult:
     metrics: dict[str, float]
 
 
+def parse_getdp_real_system_scalar_line(
+    path: Path,
+    *,
+    coordinate_column: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Parse one coordinate and scalar emitted by a real-valued GetDP system.
+
+    Complex GetDP post-processing stores an explicitly real scalar as a final real/imaginary pair,
+    which is why POC-005 reads the penultimate column. The thermal system is genuinely real and
+    GetDP serializes its scalar as the *last* numeric column. Reusing the complex parser therefore
+    reads a metadata/zero column instead of temperature. This parser makes that format distinction
+    explicit so a numerically valid thermal solve cannot be rejected by post-processing.
+    """
+    coordinates: list[float] = []
+    scalars: list[float] = []
+    for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            values = [float(token) for token in line.replace(",", " ").split()]
+        except ValueError:
+            continue
+        if len(values) < 5 or coordinate_column >= len(values):
+            continue
+        coordinates.append(values[coordinate_column])
+        scalars.append(values[-1])
+    if not coordinates:
+        raise ValueError(f"No real scalar line samples found in GetDP table: {path}")
+    coordinate = np.asarray(coordinates, dtype=float)
+    field = np.asarray(scalars, dtype=float)
+    order = np.argsort(coordinate)
+    return coordinate[order], field[order]
+
+
+def parse_getdp_real_system_global(path: Path) -> float:
+    """Parse one scalar emitted by a real-valued GetDP OnGlobal operation."""
+    for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            values = [float(token) for token in line.replace(",", " ").split()]
+        except ValueError:
+            continue
+        if values:
+            return float(values[-1])
+    raise ValueError(f"No real global scalar found in GetDP table: {path}")
+
+
 def _read_temperature_probes(
     output_dir: Path,
     requested_y_m: tuple[float, ...],
@@ -46,7 +95,7 @@ def _read_temperature_probes(
         path = output_dir / f"temperature_probe_{index:03d}.txt"
         if not path.is_file():
             raise RuntimeError(f"complete-Rig thermal probe output missing: {index}")
-        y, temperature = parse_getdp_real_scalar_line(path, coordinate_column=3)
+        y, temperature = parse_getdp_real_system_scalar_line(path, coordinate_column=3)
         if y.size != 1 or temperature.size != 1:
             raise RuntimeError(f"complete-Rig thermal point probe did not produce one sample: {index}")
         if not np.isclose(y[0], expected_y, rtol=0.0, atol=1e-10):
@@ -114,7 +163,7 @@ def run_complete_rig_steady_magnetothermal(
         encoding="utf-8",
     )
 
-    y_m, temperature_k = parse_getdp_real_scalar_line(
+    y_m, temperature_k = parse_getdp_real_system_scalar_line(
         output_dir / "temperature_axis.txt",
         coordinate_column=3,
     )
@@ -123,7 +172,7 @@ def run_complete_rig_steady_magnetothermal(
     if not np.all(np.isfinite(y_m)) or not np.all(np.isfinite(temperature_k)):
         raise RuntimeError("complete-Rig thermal axis result contains non-finite values")
     probe_positions, probe_temperature = _read_temperature_probes(output_dir, probe_y_m)
-    joule_input_w = parse_getdp_global_real(output_dir / "thermal_joule_input.txt")
+    joule_input_w = parse_getdp_real_system_global(output_dir / "thermal_joule_input.txt")
     if not np.isfinite(joule_input_w) or joule_input_w < -1e-12:
         raise RuntimeError(f"complete-Rig thermal Joule input is invalid: {joule_input_w}")
     joule_input_w = max(0.0, float(joule_input_w))
