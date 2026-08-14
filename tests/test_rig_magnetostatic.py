@@ -132,7 +132,7 @@ def test_complete_rig_getdp_formulation_emits_exact_onpoint_probe_files():
         materials,
         probe_y_m=(-0.03, 0.0, 0.03),
     )
-    assert text.count("OnPoint") == 3
+    assert text.count("Print[b, OnPoint") == 3
     assert 'File "b_probe_000.txt"' in text
     assert 'File "b_probe_001.txt"' in text
     assert 'File "b_probe_002.txt"' in text
