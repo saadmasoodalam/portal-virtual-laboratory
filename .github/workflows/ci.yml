@@ -30,6 +30,9 @@ jobs:
       - name: Test
         run: python -m pytest -ra
 
+      - name: Generate complete-Rig exploratory mesh
+        run: python -m pvl.cli.rig_mesh --output results/rig_mesh_smoke
+
       - name: Generate analytical POC-001 artifact
         run: python -m pvl.cli.main poc001 --output results/poc001
 
