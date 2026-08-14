@@ -43,6 +43,13 @@ def compile_rig_geometry(rig: RigV1Schema) -> RigGeometryManifest:
                 "member_width": _m(frame.member_width, "frame.member_width"),
                 "member_thickness": _m(frame.member_thickness, "frame.member_thickness"),
             },
+            metadata={
+                "outer_width_semantics": "top_view_x_span",
+                "outer_depth_semantics": "top_view_y_span_legacy_name",
+                "outer_height_semantics": "declared_z_envelope_legacy_name",
+                "member_width_semantics": "top_view_bar_width",
+                "member_thickness_semantics": "physical_bar_z_extrusion",
+            },
         ),
         GeometryComponent(
             component_id="copper_boundary",
@@ -59,6 +66,8 @@ def compile_rig_geometry(rig: RigV1Schema) -> RigGeometryManifest:
             metadata={
                 "baseline_open_loop": boundary.baseline_open_loop,
                 "electrically_isolated_from_frame": boundary.electrically_isolated_from_frame,
+                "gap_side": boundary.gap_side.value,
+                "gap_side_provenance": "explicit_exploratory_modeling_convention",
             },
         ),
     ]
@@ -99,6 +108,7 @@ def compile_rig_geometry(rig: RigV1Schema) -> RigGeometryManifest:
                 "radial_thickness": _m(coil.radial_thickness, name + ".radial_thickness"),
             },
             integer_parameters={"turns": int(coil.turns.value)},
+            metadata={"axis_is_geometric_normal_not_field_polarity": True},
         ))
 
     for sensor in rig.sensors:
