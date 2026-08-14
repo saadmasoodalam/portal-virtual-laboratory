@@ -237,12 +237,12 @@ def _selected_run_configuration(
 
 def _gate_issues(preflight_issues: tuple[PreflightIssue, ...], solver_route: SolverRoute) -> tuple[ExecutionGateIssue, ...]:
     issues = [ExecutionGateIssue(code=issue.code, message=issue.message) for issue in preflight_issues]
-    if solver_route in {SolverRoute.MAGNETOSTATIC, SolverRoute.MAGNETOQUASISTATIC}:
+    if solver_route == SolverRoute.MAGNETOQUASISTATIC:
         issues.append(ExecutionGateIssue(
-            code="constructive_solver_geometry_unavailable",
+            code="complete_rig_magnetoquasistatic_unavailable",
             message=(
-                "Rig v1 has no solver-ready constructive geometry adapter; preview geometry and "
-                "illustrative scene geometry must not be substituted for a FEM execution model"
+                "complete-Rig harmonic/eddy-current execution has not yet passed its dedicated "
+                "validation gate; validated POC surrogate geometry must not be substituted"
             ),
         ))
     return tuple(issues)
@@ -287,16 +287,21 @@ def evaluate_and_persist_single_run_gate(
 ) -> PersistedExecutionGate:
     """Evaluate one immutable packaged run and persist an auditable execution decision.
 
-    This unit deliberately does not execute Gmsh/GetDP. Active FEM routes remain blocked until
-    a solver-ready constructive Rig geometry adapter exists. The immutable PVL-2M package is
-    never modified; the gate record is stored in a sibling execution overlay.
+    This function never invokes Gmsh/GetDP itself. It verifies package identity and scientific
+    preflight, then records whether a separate single-run executor may proceed. OFF/OFF control and
+    complete-Rig DC magnetostatic routes are eligible; harmonic complete-Rig execution remains
+    blocked until its own solver/validation unit is complete. The immutable package is never modified.
     """
     package, base_config, matrix = _validate_package_identity(package_root)
     run_config = _selected_run_configuration(package_root, base_config, matrix, run_id)
     report = preflight_experiment(run_config, rig, materials)
     issues = _gate_issues(report.issues, report.solver_route)
 
-    execution_allowed = report.ready and report.solver_route == SolverRoute.CONTROL and not issues
+    execution_allowed = (
+        report.ready
+        and report.solver_route in {SolverRoute.CONTROL, SolverRoute.MAGNETOSTATIC}
+        and not issues
+    )
     captured = created_utc or datetime.now(timezone.utc)
     if captured.tzinfo is None or captured.utcoffset() != timezone.utc.utcoffset(captured):
         raise ValueError("created_utc must be timezone-aware UTC")
