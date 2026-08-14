@@ -39,13 +39,14 @@ def main() -> int:
         notes="PVL-2Q exploratory complete-Rig numerical convergence state",
     )
     try:
-        # Run #163 established that finite-aperture averaging removes much of the first-order
-        # H(curl) element-membership noise, but 15 -> 12 mm remained outside the retained 3% gate
-        # (5.46% probe, 6.78% center) and the 75% -> 100% air-domain probe comparison remained
-        # 12.33%. That means the old sequence was still pre-asymptotic; the correct response is a
-        # finer mesh and a farther truncation boundary, not a weaker tolerance. Distant air remains
-        # graded to 40 mm and the winding/steel local targets stay fixed so the extra cost is spent
-        # where the field observable is sensitive.
+        # Run #167 showed that even the finer 12/10/8 mm regime left a one-dimensional sensor
+        # aperture mesh-sensitive (4.37% final mesh-probe change, 4.59% center; 4.51% final-domain
+        # probe change, 3.04% center). Before spending another large refinement step on a
+        # discontinuous first-order H(curl) curl observable, retain the exact same mesh/domain
+        # sequence and replace only the measurement functional with a small fixed 3D sensor volume.
+        # Each 4 mm cube stays wholly inside either the sample medium or air. GetDP samples B on a
+        # fixed OnBox grid and PVL integrates B_y over that volume. Maxwell/material/source/boundary
+        # definitions and the 3% acceptance limits remain unchanged.
         mesh_points, domain_points, gate = run_rig_dc_mesh_and_domain_convergence(
             experiment,
             topology,
@@ -61,8 +62,8 @@ def main() -> int:
             far_field_near_margin_fraction=0.25,
             far_field_transition_m=0.10,
             probe_y_m=(-0.060, -0.030, 0.0, 0.030, 0.060),
-            probe_window_half_width_m=0.005,
-            probe_window_samples=21,
+            probe_box_half_width_m=0.002,
+            probe_box_divisions=(4, 4, 4),
         )
     except SolverUnavailableError as exc:
         print(f"PVL complete-Rig DC convergence status: NOT READY — {exc}")
