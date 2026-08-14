@@ -44,7 +44,11 @@ jobs:
         run: python -m pvl.cli.rig_dc --output results/rig_dc_smoke
 
       - name: Run complete-Rig DC mesh and air-domain convergence
+        if: github.ref == 'refs/heads/main' || github.head_ref == 'pvl-2q-full-rig-dc-magnetostatic'
         run: python -m pvl.cli.rig_dc_convergence --output results/rig_dc_convergence
+
+      - name: Run complete-Rig harmonic eddy-current smoke
+        run: python -m pvl.cli.rig_mq --output results/rig_mq_smoke
 
       - name: Generate analytical POC-001 artifact
         run: python -m pvl.cli.main poc001 --output results/poc001
