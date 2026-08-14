@@ -264,7 +264,10 @@ def render_complete_rig_geo(topology: RigConstructiveTopology, config: RigGmshCo
     xmin, xmax, ymin, ymax, zmin, zmax = manifest.air_bounds_m
     volume_tags = ",".join(str(region.volume_tag) for region in manifest.physical_regions)
     extent = max(xmax - xmin, ymax - ymin, zmax - zmin)
-    boundary_eps = max(1e-9, extent * 1e-7)
+    # OpenCASCADE entity bounding boxes include kernel tolerances. Keep this selection slab much
+    # wider than that numerical fuzz while remaining orders of magnitude inside the retained
+    # >=50 mm air padding, so internal material interfaces cannot be selected.
+    boundary_eps = max(1e-6, extent * 1e-5)
     lines.extend([
         "// Surrounding air before conformal fragmentation.",
         f"Box({AIR_SOURCE_TAG}) = {{{_fmt(xmin)}, {_fmt(ymin)}, {_fmt(zmin)}, {_fmt(xmax - xmin)}, {_fmt(ymax - ymin)}, {_fmt(zmax - zmin)}}};",
