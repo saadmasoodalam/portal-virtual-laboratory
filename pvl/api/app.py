@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from hashlib import sha256
-import json
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -14,6 +13,7 @@ from pvl.experiments.models import (
     SampleMedium,
     SolverFidelity,
 )
+from pvl.experiments.package import experiment_plan_hash, persist_dc_experiment_package
 from pvl.experiments.planning import plan_rig_v1_dc_experiment
 from pvl.geometry.adapter import GeometryAdapterMode, adapter_status, build_preview_from_rig
 from pvl.geometry.preview import PreviewScene
@@ -93,6 +93,19 @@ class DcPlanResponse(BaseModel):
     runs: tuple[DcPlannedRunResponse, ...]
 
 
+class ExperimentPackageResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    package_id: str
+    plan_hash: str
+    package_fingerprint: str
+    configuration_hash: str
+    physics_state_hash: str
+    run_count: int
+    relative_path: str
+    checksummed_files: int
+    solver_execution: bool = False
+
+
 def _experiment_medium(rig: RigV1Schema) -> SampleMedium:
     by_material = {medium.material_id: medium for medium in SampleMedium}
     try:
@@ -126,14 +139,9 @@ def _experiment_template(rig: RigV1Schema, library: MaterialLibrary) -> Experime
     )
 
 
-def _plan_hash(runs: tuple[DcPlannedRunResponse, ...]) -> str:
-    payload = [run.model_dump(mode="json") for run in runs]
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    return sha256(canonical.encode("utf-8")).hexdigest()
-
-
-def create_app(materials: MaterialLibrary | None = None) -> FastAPI:
+def create_app(materials: MaterialLibrary | None = None, results_root: Path | None = None) -> FastAPI:
     library = materials or load_builtin_material_library()
+    storage_root = results_root or Path("results")
     application = FastAPI(title="PVL API", version="0.1.0")
 
     @application.get("/api/v1/health")
@@ -222,12 +230,36 @@ def create_app(materials: MaterialLibrary | None = None) -> FastAPI:
             for run in planned
         )
         return DcPlanResponse(
-            plan_hash=_plan_hash(runs),
+            plan_hash=experiment_plan_hash(planned),
             current_a=request.current_a,
             run_count=len(runs),
             repetitions=request.experiment.repetitions,
             randomization_seed=request.experiment.randomization_seed,
             runs=runs,
+        )
+
+    @application.post("/api/v1/experiment/plan/dc/persist", response_model=ExperimentPackageResponse)
+    def experiment_persist_dc(request: DcPlanRequest) -> ExperimentPackageResponse:
+        try:
+            package = persist_dc_experiment_package(
+                request.experiment,
+                request.current_a,
+                storage_root,
+            )
+        except FileExistsError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "experiment_package_exists", "message": str(exc)},
+            ) from exc
+        return ExperimentPackageResponse(
+            package_id=package.manifest.package_id,
+            plan_hash=package.manifest.plan_hash,
+            package_fingerprint=package.manifest.package_fingerprint,
+            configuration_hash=package.manifest.configuration_hash,
+            physics_state_hash=package.manifest.physics_state_hash,
+            run_count=package.manifest.run_count,
+            relative_path=str(Path(package.layout.root).relative_to(storage_root)),
+            checksummed_files=len(package.checksums),
         )
 
     return application
