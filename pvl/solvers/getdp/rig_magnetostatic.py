@@ -137,7 +137,7 @@ def render_rig_magnetostatic_pro(
         if region.material_id is None:
             raise ValueError(f"material region has no material id: {region.primitive_id}")
         record = materials.require(region.material_id)
-        mur = record.electromagnetic.relative_permeability
+        mur = record.properties.relative_permeability
         if mur is None or mur <= 0.0:
             raise ValueError(f"material lacks positive relative permeability: {region.material_id}")
         material_functions.append(
