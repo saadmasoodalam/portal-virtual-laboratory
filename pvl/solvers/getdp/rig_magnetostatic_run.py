@@ -22,6 +22,8 @@ class RigMagnetostaticResult:
     b_y_t: np.ndarray
     probe_y_m: np.ndarray
     probe_b_y_t: np.ndarray
+    box_probe_y_m: np.ndarray
+    box_probe_b_y_t: np.ndarray
     mesh_run: RigMeshRun
     pro_path: Path
     source_ampere_turns: tuple[float, float]
@@ -73,6 +75,104 @@ def _read_exact_probes(
     return np.asarray(y_values, dtype=float), np.asarray(b_values, dtype=float)
 
 
+def _parse_getdp_vector_table(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    """Return xyz coordinates and vector values from a real-valued GetDP ``Format Table`` file."""
+    coordinates: list[tuple[float, float, float]] = []
+    vectors: list[tuple[float, float, float]] = []
+    for raw in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            values = [float(token) for token in line.replace(",", " ").split()]
+        except ValueError:
+            continue
+        if len(values) < 8:
+            continue
+        coordinates.append((values[2], values[3], values[4]))
+        vectors.append((values[-3], values[-2], values[-1]))
+    if not coordinates:
+        raise ValueError(f"No numeric vector samples found in GetDP table: {path}")
+    xyz = np.asarray(coordinates, dtype=float)
+    vector = np.asarray(vectors, dtype=float)
+    if not np.all(np.isfinite(xyz)) or not np.all(np.isfinite(vector)):
+        raise ValueError(f"Non-finite vector samples found in GetDP table: {path}")
+    return xyz, vector
+
+
+def _read_box_probe_mean(
+    path: Path,
+    *,
+    center_xyz_m: tuple[float, float, float],
+    half_width_m: float,
+) -> float:
+    """Compute a tensor-trapezoidal volume mean of B_y from a fixed GetDP OnBox grid."""
+    if not path.is_file() or path.stat().st_size == 0:
+        raise RuntimeError(f"GetDP completed without producing sensor-volume probe file: {path.name}")
+    xyz, vector = _parse_getdp_vector_table(path)
+    axes = [np.unique(xyz[:, index]) for index in range(3)]
+    if any(axis.size < 2 for axis in axes):
+        raise RuntimeError(f"sensor-volume probe grid is degenerate: {path.name}")
+    expected_samples = int(np.prod([axis.size for axis in axes]))
+    if xyz.shape[0] != expected_samples:
+        raise RuntimeError(f"sensor-volume probe grid is incomplete or duplicated: {path.name}")
+
+    center = np.asarray(center_xyz_m, dtype=float)
+    for index, axis in enumerate(axes):
+        if not np.isclose(axis[0], center[index] - half_width_m, rtol=0.0, atol=1e-9):
+            raise RuntimeError(f"sensor-volume probe lower bound mismatch: {path.name}")
+        if not np.isclose(axis[-1], center[index] + half_width_m, rtol=0.0, atol=1e-9):
+            raise RuntimeError(f"sensor-volume probe upper bound mismatch: {path.name}")
+
+    grid = np.full(tuple(axis.size for axis in axes), np.nan, dtype=float)
+    for coordinate, by_value in zip(xyz, vector[:, 1]):
+        indices: list[int] = []
+        for axis, value in zip(axes, coordinate):
+            position = int(np.searchsorted(axis, value))
+            if position >= axis.size or not np.isclose(axis[position], value, rtol=0.0, atol=1e-12):
+                raise RuntimeError(f"sensor-volume probe coordinate is off-grid: {path.name}")
+            indices.append(position)
+        key = tuple(indices)
+        if np.isfinite(grid[key]):
+            raise RuntimeError(f"sensor-volume probe grid contains duplicate coordinates: {path.name}")
+        grid[key] = float(by_value)
+    if not np.all(np.isfinite(grid)):
+        raise RuntimeError(f"sensor-volume probe grid contains missing/non-finite values: {path.name}")
+
+    integrated_z = np.trapezoid(grid, axes[2], axis=2)
+    integrated_y = np.trapezoid(integrated_z, axes[1], axis=1)
+    integral = float(np.trapezoid(integrated_y, axes[0], axis=0))
+    volume = float(np.prod([axis[-1] - axis[0] for axis in axes]))
+    if volume <= 0.0:
+        raise RuntimeError(f"sensor-volume probe has non-positive sampled volume: {path.name}")
+    mean = integral / volume
+    if not np.isfinite(mean):
+        raise RuntimeError(f"sensor-volume probe mean is non-finite: {path.name}")
+    return float(mean)
+
+
+def _read_box_probes(
+    output_dir: Path,
+    topology: RigConstructiveTopology,
+    requested_y_m: tuple[float, ...],
+    *,
+    half_width_m: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    if not requested_y_m:
+        return np.asarray([], dtype=float), np.asarray([], dtype=float)
+    chamber = next(item for item in topology.primitives if item.primitive_id == "sample:medium")
+    px, _, pz = chamber.center_m
+    means = [
+        _read_box_probe_mean(
+            output_dir / f"b_probe_box_{index:03d}.txt",
+            center_xyz_m=(px, y_value, pz),
+            half_width_m=half_width_m,
+        )
+        for index, y_value in enumerate(requested_y_m)
+    ]
+    return np.asarray(requested_y_m, dtype=float), np.asarray(means, dtype=float)
+
+
 def run_complete_rig_dc_magnetostatic(
     experiment: ExperimentConfig,
     topology: RigConstructiveTopology,
@@ -83,6 +183,9 @@ def run_complete_rig_dc_magnetostatic(
     executables: ExecutableSet | None = None,
     axis_samples: int = 101,
     probe_y_m: tuple[float, ...] = (),
+    probe_box_y_m: tuple[float, ...] = (),
+    probe_box_half_width_m: float = 0.002,
+    probe_box_divisions: tuple[int, int, int] = (4, 4, 4),
 ) -> RigMagnetostaticResult:
     """Mesh and solve exactly one ordinary-physics complete-Rig DC state.
 
@@ -119,6 +222,9 @@ def run_complete_rig_dc_magnetostatic(
         output_dir / "rig_dc.pro",
         axis_samples=axis_samples,
         probe_y_m=probe_y_m,
+        probe_box_y_m=probe_box_y_m,
+        probe_box_half_width_m=probe_box_half_width_m,
+        probe_box_divisions=probe_box_divisions,
     )
     run = run_getdp(
         pro_path,
@@ -140,12 +246,25 @@ def run_complete_rig_dc_magnetostatic(
         raise RuntimeError("GetDP completed without producing complete-Rig b_axis.txt")
     y_m, b_y_t = parse_getdp_axis_table(axis_file)
     exact_probe_y_m, exact_probe_b_y_t = _read_exact_probes(output_dir, probe_y_m)
+    box_probe_y_m_values, box_probe_b_y_t = _read_box_probes(
+        output_dir,
+        topology,
+        probe_box_y_m,
+        half_width_m=probe_box_half_width_m,
+    )
     metrics = _axis_metrics(y_m, b_y_t)
     if exact_probe_b_y_t.size:
         metrics["probe_peak_abs_b_t"] = float(np.max(np.abs(exact_probe_b_y_t)))
         zero_indices = np.flatnonzero(np.isclose(exact_probe_y_m, 0.0, rtol=0.0, atol=1e-14))
         if zero_indices.size == 1:
             metrics["probe_center_b_y_t"] = float(exact_probe_b_y_t[int(zero_indices[0])])
+    if box_probe_b_y_t.size:
+        metrics["box_probe_peak_abs_b_y_t"] = float(np.max(np.abs(box_probe_b_y_t)))
+        zero_indices = np.flatnonzero(
+            np.isclose(box_probe_y_m_values, 0.0, rtol=0.0, atol=1e-14)
+        )
+        if zero_indices.size == 1:
+            metrics["box_probe_center_b_y_t"] = float(box_probe_b_y_t[int(zero_indices[0])])
     if metrics["axis_peak_abs_b_t"] <= 0.0 and any(
         abs(value) > 0.0 for value in (source_a.ampere_turns, source_b.ampere_turns)
     ):
@@ -179,11 +298,21 @@ def run_complete_rig_dc_magnetostatic(
             {"y_m": float(y_value), "b_y_t": float(b_value)}
             for y_value, b_value in zip(exact_probe_y_m, exact_probe_b_y_t)
         ],
+        "sensor_volume_probes": [
+            {
+                "center_y_m": float(y_value),
+                "half_width_m": probe_box_half_width_m,
+                "onbox_divisions": list(probe_box_divisions),
+                "volume_mean_b_y_t": float(b_value),
+            }
+            for y_value, b_value in zip(box_probe_y_m_values, box_probe_b_y_t)
+        ],
         "mesh_gate": mesh_run.gate.model_dump(mode="json"),
         "metrics": metrics,
         "scientific_boundary": (
-            "Ordinary 3D DC magnetostatics only. Conductivity-driven eddy currents, thermal "
-            "effects, anomalies and Portal Hypothesis terms are absent."
+            "Ordinary 3D DC magnetostatics only. Sensor-volume post-processing changes only the "
+            "reported observable; conductivity-driven eddy currents, thermal effects, anomalies "
+            "and Portal Hypothesis terms are absent."
         ),
     }
     (output_dir / "metrics.json").write_text(
@@ -194,6 +323,8 @@ def run_complete_rig_dc_magnetostatic(
         b_y_t=b_y_t,
         probe_y_m=exact_probe_y_m,
         probe_b_y_t=exact_probe_b_y_t,
+        box_probe_y_m=box_probe_y_m_values,
+        box_probe_b_y_t=box_probe_b_y_t,
         mesh_run=mesh_run,
         pro_path=pro_path,
         source_ampere_turns=(source_a.ampere_turns, source_b.ampere_turns),
