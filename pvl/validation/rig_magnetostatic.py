@@ -197,6 +197,9 @@ def run_rig_dc_mesh_and_domain_convergence(
     minimum_mesh_size_m: float = 0.001,
     winding_mesh_size_m: float | None = None,
     steel_mesh_size_m: float | None = None,
+    far_field_mesh_size_m: float | None = None,
+    far_field_near_margin_fraction: float = 0.25,
+    far_field_transition_m: float = 0.10,
     probe_y_m: tuple[float, ...] = (-0.10, -0.05, 0.0, 0.05, 0.10),
     executables: ExecutableSet | None = None,
 ) -> tuple[list[RigDcConvergencePoint], list[RigDcConvergencePoint], RigDcConvergenceGate]:
@@ -208,6 +211,11 @@ def run_rig_dc_mesh_and_domain_convergence(
         raise ValueError("air margins must strictly increase")
     if shared_mesh_size_m not in mesh_sizes_m or shared_air_margin not in air_margins:
         raise ValueError("shared mesh/domain baseline must be present in both retained sequences")
+    if far_field_mesh_size_m is not None:
+        if far_field_mesh_size_m < max(mesh_sizes_m):
+            raise ValueError("far-field mesh size must not refine any retained near-field mesh level")
+        if far_field_near_margin_fraction >= min(air_margins):
+            raise ValueError("far-field near margin must lie inside every retained air domain")
     if len(set(probe_y_m)) != len(probe_y_m):
         raise ValueError("complete-Rig convergence probe coordinates must be unique")
     if sum(abs(value) <= 1e-14 for value in probe_y_m) != 1:
@@ -229,6 +237,9 @@ def run_rig_dc_mesh_and_domain_convergence(
             air_margin_fraction=air_margin,
             winding_characteristic_length_m=winding_mesh_size_m,
             steel_characteristic_length_m=steel_mesh_size_m,
+            far_field_characteristic_length_m=far_field_mesh_size_m,
+            far_field_near_margin_fraction=far_field_near_margin_fraction,
+            far_field_transition_m=far_field_transition_m,
         )
         result = run_complete_rig_dc_magnetostatic(
             experiment,
@@ -266,6 +277,12 @@ def run_rig_dc_mesh_and_domain_convergence(
         "local_refinement": {
             "winding_mesh_size_m": winding_mesh_size_m,
             "steel_mesh_size_m": steel_mesh_size_m,
+        },
+        "far_field_mesh": {
+            "far_field_mesh_size_m": far_field_mesh_size_m,
+            "near_margin_fraction": far_field_near_margin_fraction,
+            "transition_m": far_field_transition_m,
+            "near_region_invariant_across_domain_sequence": far_field_mesh_size_m is not None,
         },
         "validation_gate": gate.as_dict(),
         "scientific_boundary": (
