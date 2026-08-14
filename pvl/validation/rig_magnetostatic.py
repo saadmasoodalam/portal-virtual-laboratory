@@ -50,25 +50,74 @@ class RigDcConvergenceGate:
         }
 
 
-def _probe_values(
-    result: RigMagnetostaticResult, probe_y_m: tuple[float, ...]
+def _probe_sample_coordinates(
+    probe_y_m: tuple[float, ...],
+    *,
+    half_width_m: float,
+    samples_per_probe: int,
 ) -> tuple[float, ...]:
-    requested = np.asarray(probe_y_m, dtype=float)
+    if half_width_m <= 0.0:
+        raise ValueError("finite convergence probe half-width must be positive")
+    if samples_per_probe < 3 or samples_per_probe % 2 == 0:
+        raise ValueError("finite convergence probes require an odd sample count of at least three")
+    samples: list[float] = []
+    for center in probe_y_m:
+        samples.extend(
+            float(value)
+            for value in np.linspace(
+                center - half_width_m,
+                center + half_width_m,
+                samples_per_probe,
+            )
+        )
+    return tuple(samples)
+
+
+def _finite_aperture_probe_values(
+    result: RigMagnetostaticResult,
+    probe_y_m: tuple[float, ...],
+    sample_y_m: tuple[float, ...],
+    *,
+    samples_per_probe: int,
+) -> tuple[float, ...]:
+    requested = np.asarray(sample_y_m, dtype=float)
     if result.probe_y_m.size != requested.size or result.probe_b_y_t.size != requested.size:
-        raise ValueError("complete-Rig exact probe result is empty or inconsistent")
+        raise ValueError("complete-Rig finite-aperture probe result is empty or inconsistent")
     if not np.allclose(result.probe_y_m, requested, rtol=0.0, atol=1e-10):
-        raise ValueError("complete-Rig exact probe coordinates do not match the convergence contract")
+        raise ValueError("complete-Rig exact sample coordinates do not match the convergence contract")
     if not np.all(np.isfinite(result.probe_b_y_t)):
-        raise ValueError("complete-Rig exact probe result contains non-finite values")
-    return tuple(float(value) for value in result.probe_b_y_t)
+        raise ValueError("complete-Rig finite-aperture probe result contains non-finite values")
+    expected_count = len(probe_y_m) * samples_per_probe
+    if requested.size != expected_count:
+        raise ValueError("complete-Rig finite-aperture sampling shape is inconsistent")
+    reshaped = result.probe_b_y_t.reshape((len(probe_y_m), samples_per_probe))
+    return tuple(float(value) for value in np.mean(reshaped, axis=1))
 
 
 def _point(
     result: RigMagnetostaticResult,
     mesh_config: RigGmshConfig,
     probe_y_m: tuple[float, ...],
+    sample_y_m: tuple[float, ...] | None = None,
+    *,
+    samples_per_probe: int = 1,
 ) -> RigDcConvergencePoint:
-    probes = _probe_values(result, probe_y_m)
+    if sample_y_m is None:
+        # Compatibility path for unit-level synthetic convergence points and callers that explicitly
+        # request a single exact value. Production PVL-2Q convergence uses finite apertures below.
+        requested = np.asarray(probe_y_m, dtype=float)
+        if result.probe_y_m.size != requested.size or result.probe_b_y_t.size != requested.size:
+            raise ValueError("complete-Rig exact probe result is empty or inconsistent")
+        if not np.allclose(result.probe_y_m, requested, rtol=0.0, atol=1e-10):
+            raise ValueError("complete-Rig exact probe coordinates do not match the convergence contract")
+        probes = tuple(float(value) for value in result.probe_b_y_t)
+    else:
+        probes = _finite_aperture_probe_values(
+            result,
+            probe_y_m,
+            sample_y_m,
+            samples_per_probe=samples_per_probe,
+        )
     zero_indices = [index for index, value in enumerate(probe_y_m) if abs(value) <= 1e-14]
     if len(zero_indices) != 1:
         raise ValueError("complete-Rig convergence probe contract requires exactly one y=0 probe")
@@ -201,6 +250,8 @@ def run_rig_dc_mesh_and_domain_convergence(
     far_field_near_margin_fraction: float = 0.25,
     far_field_transition_m: float = 0.10,
     probe_y_m: tuple[float, ...] = (-0.10, -0.05, 0.0, 0.05, 0.10),
+    probe_window_half_width_m: float = 0.005,
+    probe_window_samples: int = 21,
     executables: ExecutableSet | None = None,
 ) -> tuple[list[RigDcConvergencePoint], list[RigDcConvergencePoint], RigDcConvergenceGate]:
     if len(mesh_sizes_m) < 3 or len(air_margins) < 3:
@@ -217,12 +268,17 @@ def run_rig_dc_mesh_and_domain_convergence(
         if far_field_near_margin_fraction >= min(air_margins):
             raise ValueError("far-field near margin must lie inside every retained air domain")
     if len(set(probe_y_m)) != len(probe_y_m):
-        raise ValueError("complete-Rig convergence probe coordinates must be unique")
+        raise ValueError("complete-Rig convergence probe centers must be unique")
     if sum(abs(value) <= 1e-14 for value in probe_y_m) != 1:
-        raise ValueError("complete-Rig convergence requires exactly one y=0 point probe")
+        raise ValueError("complete-Rig convergence requires exactly one y=0 probe center")
     if not all(np.isfinite(value) for value in probe_y_m):
-        raise ValueError("complete-Rig convergence probe coordinates must be finite")
+        raise ValueError("complete-Rig convergence probe centers must be finite")
 
+    sample_y_m = _probe_sample_coordinates(
+        probe_y_m,
+        half_width_m=probe_window_half_width_m,
+        samples_per_probe=probe_window_samples,
+    )
     exe = executables or discover_executables()
     output_dir.mkdir(parents=True, exist_ok=True)
     cache: dict[tuple[float, float], RigDcConvergencePoint] = {}
@@ -249,9 +305,15 @@ def run_rig_dc_mesh_and_domain_convergence(
             output_dir / label,
             executables=exe,
             axis_samples=101,
-            probe_y_m=probe_y_m,
+            probe_y_m=sample_y_m,
         )
-        point = _point(result, config, probe_y_m)
+        point = _point(
+            result,
+            config,
+            probe_y_m,
+            sample_y_m,
+            samples_per_probe=probe_window_samples,
+        )
         cache[key] = point
         return point
 
@@ -271,7 +333,10 @@ def run_rig_dc_mesh_and_domain_convergence(
     gate = evaluate_rig_dc_convergence_gate(mesh_points, domain_points)
     payload = {
         "probe_y_m": list(probe_y_m),
-        "probe_sampling": "GetDP OnPoint exact coordinates",
+        "probe_sampling": "fixed-coordinate finite-aperture mean of exact GetDP OnPoint samples",
+        "probe_window_half_width_m": probe_window_half_width_m,
+        "probe_window_samples": probe_window_samples,
+        "exact_sample_y_m": list(sample_y_m),
         "mesh_sequence": [point.__dict__ for point in mesh_points],
         "domain_sequence": [point.__dict__ for point in domain_points],
         "local_refinement": {
@@ -287,7 +352,9 @@ def run_rig_dc_mesh_and_domain_convergence(
         "validation_gate": gate.as_dict(),
         "scientific_boundary": (
             "This is numerical stabilization of an exploratory linear-material complete-Rig "
-            "magnetostatic model, not validation against physical Rig measurements."
+            "magnetostatic model. The finite aperture suppresses element-membership noise from a "
+            "single point and approximates a finite sensor active region; it is not validation "
+            "against physical Rig measurements."
         ),
     }
     (output_dir / "convergence.json").write_text(
