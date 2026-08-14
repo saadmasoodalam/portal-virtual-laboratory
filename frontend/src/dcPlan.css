@@ -1,0 +1,47 @@
+.dc-plan-editor {
+  margin-top: 14px;
+  padding: 18px;
+  border: 1px solid #1c3445;
+  border-radius: 12px;
+  background: rgba(6, 15, 23, .94);
+}
+.dc-plan-editor h2 { margin: 0; font-weight: 650; letter-spacing: -.02em; }
+.dc-plan-controls {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) repeat(2, minmax(140px, 1fr)) minmax(160px, .8fr);
+  gap: 10px;
+  align-items: stretch;
+  margin: 18px 0 12px;
+}
+.dc-plan-controls label, .dc-plan-controls > div {
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid #203b4d;
+  border-radius: 8px;
+  background: #081721;
+}
+.dc-plan-controls span, .plan-summary-grid span { color: #718a9a; font-size: .66rem; text-transform: uppercase; letter-spacing: .05em; }
+.dc-plan-controls strong, .dc-plan-controls small { display: block; }
+.dc-plan-controls small { color: #607b8c; font-size: .66rem; line-height: 1.35; }
+.dc-plan-controls input { width: 100%; min-height: 36px; padding: 7px 9px; border: 1px solid #315064; border-radius: 6px; background: #07121a; color: #d8e5ed; }
+.plan-summary-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
+.plan-summary-grid > div { padding: 10px; border: 1px solid #203b4d; border-radius: 8px; background: #081721; }
+.plan-summary-grid strong { display: block; margin-top: 5px; font-size: .78rem; overflow-wrap: anywhere; }
+.plan-table-wrap { overflow-x: auto; border: 1px solid #203b4d; border-radius: 9px; }
+.plan-table { width: 100%; border-collapse: collapse; min-width: 760px; font-size: .73rem; }
+.plan-table th, .plan-table td { padding: 8px 10px; border-bottom: 1px solid rgba(49, 79, 98, .35); text-align: left; vertical-align: top; }
+.plan-table th { background: #0a1a25; color: #8fa8b8; font-size: .65rem; text-transform: uppercase; letter-spacing: .05em; }
+.plan-table tbody tr:last-child td { border-bottom: 0; }
+.plan-table td strong, .plan-table td small { display: block; }
+.plan-table td small { margin-top: 2px; color: #617d8e; }
+
+@media (max-width: 1050px) {
+  .dc-plan-controls { grid-template-columns: 1fr 1fr; }
+  .plan-summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  .dc-plan-editor { padding: 12px; }
+  .dc-plan-controls, .plan-summary-grid { grid-template-columns: 1fr; }
+}
