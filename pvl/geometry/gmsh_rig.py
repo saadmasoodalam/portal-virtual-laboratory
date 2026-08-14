@@ -331,10 +331,15 @@ def _far_field_mesh_size_lines(
     far_size = config.far_field_characteristic_length_m
     if far_size is None:
         return []
+    # The outer air box intentionally enforces a minimum absolute padding so even thin axes have
+    # enough clearance for the truncation boundary. Reusing that same minimum for the inner grading
+    # box can make the two boxes coincide on a thin axis (the failure seen in CI run #154). The near
+    # box is a numerical mesh-control region, not a physical boundary, so its padding is defined only
+    # by the retained topology fraction. A positive topology extent guarantees non-zero clearance.
     near_bounds = _padded_topology_bounds(
         topology,
         config.far_field_near_margin_fraction,
-        config.air_min_margin_m,
+        0.0,
     )
     outer_bounds = topology_air_bounds(topology, config)
     if not all(
