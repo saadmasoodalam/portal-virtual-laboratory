@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+# Complete-Rig FEM convergence is intentionally expensive. A newer commit on the same branch
+# supersedes the numerical evidence from an older commit, so do not burn runner time finishing
+# obsolete meshes/solves. Different branches/PRs remain independent.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   python-tests:
     runs-on: ubuntu-24.04
