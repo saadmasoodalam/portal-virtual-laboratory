@@ -1,6 +1,15 @@
 import { useMemo, useState } from 'react';
 
-import { fetchMaterialCatalog, fetchRigTemplate, requestRigPreview, type MaterialCatalog } from './api';
+import {
+  fetchExperimentTemplate,
+  fetchMaterialCatalog,
+  fetchRigTemplate,
+  requestRigPreview,
+  validateExperiment,
+  type ExperimentConfig,
+  type MaterialCatalog,
+} from './api';
+import { ExperimentEditor } from './ExperimentEditor';
 import { parsePreviewScene } from './parsePreviewScene';
 import { RigManifestEditor } from './RigManifestEditor';
 import { PreviewRigCanvas } from './scene/PreviewRigCanvas';
@@ -23,8 +32,10 @@ export default function App() {
   const [scene, setScene] = useState<PreviewScene | null>(null);
   const [manifest, setManifest] = useState<Record<string, unknown> | null>(null);
   const [materialCatalog, setMaterialCatalog] = useState<MaterialCatalog | null>(null);
+  const [experiment, setExperiment] = useState<ExperimentConfig | null>(null);
+  const [physicsStateHash, setPhysicsStateHash] = useState<string | null>(null);
   const [manifestSourceName, setManifestSourceName] = useState('canonical API template');
-  const [view, setView] = useState<'editor' | 'preview'>('preview');
+  const [view, setView] = useState<'editor' | 'preview' | 'experiment'>('preview');
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -44,6 +55,11 @@ export default function App() {
     return catalog;
   }
 
+  function invalidateExperiment() {
+    setExperiment(null);
+    setPhysicsStateHash(null);
+  }
+
   async function startNewManifest() {
     setBusy(true);
     setError(null);
@@ -52,6 +68,8 @@ export default function App() {
       setManifest(template);
       setMaterialCatalog(catalog);
       setManifestSourceName('canonical API template');
+      setScene(null);
+      invalidateExperiment();
       setView('editor');
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Unable to load the Rig template.');
@@ -69,6 +87,7 @@ export default function App() {
         setSource('local');
         setFileName(file.name);
         setManifest(null);
+        invalidateExperiment();
         setView('preview');
       } else {
         if (!isRecord(document)) throw new Error('Rig manifest must be a JSON object.');
@@ -78,6 +97,7 @@ export default function App() {
         setScene(null);
         setSource(null);
         setFileName(file.name);
+        invalidateExperiment();
         setView('editor');
       }
       setHidden(new Set());
@@ -88,6 +108,7 @@ export default function App() {
       setSource(null);
       setFileName(null);
       setSelected(null);
+      invalidateExperiment();
       setError(caught instanceof Error ? caught.message : 'Unable to load Rig or preview JSON.');
     }
   }
@@ -97,29 +118,58 @@ export default function App() {
     setBusy(true);
     setError(null);
     try {
-      const result = await requestRigPreview(manifest);
+      const [result, draft] = await Promise.all([
+        requestRigPreview(manifest),
+        fetchExperimentTemplate(manifest),
+      ]);
       setScene(result.scene);
+      setExperiment(draft);
+      setPhysicsStateHash(null);
       setSource('api');
       setFileName(manifestSourceName);
       setHidden(new Set());
       setSelected(null);
       setView('preview');
     } catch (caught) {
+      invalidateExperiment();
       setError(caught instanceof Error ? caught.message : 'Unable to validate the Rig manifest.');
     } finally {
       setBusy(false);
     }
   }
 
-  function downloadManifest() {
-    if (!manifest) return;
-    const blob = new Blob([`${JSON.stringify(manifest, null, 2)}\n`], { type: 'application/json' });
+  async function validateExperimentState() {
+    if (!experiment) return;
+    setBusy(true);
+    setError(null);
+    setPhysicsStateHash(null);
+    try {
+      const result = await validateExperiment(experiment);
+      setExperiment(result.experiment);
+      setPhysicsStateHash(result.physics_state_hash);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Unable to validate experiment configuration.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function downloadJson(value: unknown, name: string) {
+    const blob = new Blob([`${JSON.stringify(value, null, 2)}\n`], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = 'pvl-rig-v1-manifest.json';
+    anchor.download = name;
     anchor.click();
     URL.revokeObjectURL(url);
+  }
+
+  function downloadManifest() {
+    if (manifest) downloadJson(manifest, 'pvl-rig-v1-manifest.json');
+  }
+
+  function downloadExperiment() {
+    if (experiment) downloadJson(experiment, 'pvl-experiment-state.json');
   }
 
   function toggleComponent(componentId: string) {
@@ -142,6 +192,12 @@ export default function App() {
           {manifest && view === 'preview' && (
             <button type="button" className="secondary-button" onClick={() => setView('editor')}>Edit Rig</button>
           )}
+          {experiment && view === 'preview' && (
+            <button type="button" className="primary-button" onClick={() => setView('experiment')}>Edit excitation</button>
+          )}
+          {scene && view === 'experiment' && (
+            <button type="button" className="secondary-button" onClick={() => setView('preview')}>View Rig</button>
+          )}
           <button type="button" className="secondary-button" onClick={() => void startNewManifest()} disabled={busy}>
             New Rig manifest
           </button>
@@ -161,30 +217,40 @@ export default function App() {
       </header>
 
       <div className="boundary-banner">
-        <strong>PVL-2J boundary:</strong> dimensions, provenance, material assignments, chamber medium and copper-boundary state are editable. Choices come from the versioned backend material catalog. Solver execution remains disabled from this interface.
+        <strong>PVL-2K boundary:</strong> Rig configuration and Coil A/B excitation states can now be declared and validated independently. Experiment validation returns a deterministic physics-state hash but never schedules or executes a solver.
       </div>
 
       {error && <div className="error-panel">{error}</div>}
 
-      {view === 'editor' && manifest && materialCatalog ? (
+      {view === 'experiment' && experiment ? (
+        <ExperimentEditor
+          experiment={experiment}
+          busy={busy}
+          physicsStateHash={physicsStateHash}
+          onChange={(next) => { setExperiment(next); setPhysicsStateHash(null); }}
+          onValidate={() => void validateExperimentState()}
+          onDownload={downloadExperiment}
+          onBackToRig={() => setView('preview')}
+        />
+      ) : view === 'editor' && manifest && materialCatalog ? (
         <RigManifestEditor
           manifest={manifest}
           sourceName={manifestSourceName}
           busy={busy}
           materialCatalog={materialCatalog}
-          onChange={setManifest}
+          onChange={(next) => { setManifest(next); invalidateExperiment(); }}
           onPreview={() => void previewManifest()}
           onDownload={downloadManifest}
           onReset={() => void startNewManifest()}
         />
       ) : view === 'editor' && manifest ? (
-        <section className="empty-state"><div><p className="eyebrow">PVL-2J</p><h2>Loading controlled material catalog…</h2></div></section>
+        <section className="empty-state"><div><p className="eyebrow">PVL-2K</p><h2>Loading controlled material catalog…</h2></div></section>
       ) : !scene ? (
         <section className="empty-state">
           <div>
-            <p className="eyebrow">PVL-2J</p>
+            <p className="eyebrow">PVL-2K</p>
             <h2>Create a controlled Rig manifest or load an existing file.</h2>
-            <p>Use the canonical template to enter dimensions and provenance, select controlled materials and boundary states, then validate through the FastAPI preview boundary. Solver execution remains disabled.</p>
+            <p>Complete and validate the Rig first. PVL then creates a separate fingerprinted experiment state for Coil A and Coil B excitation without running the solver.</p>
             <button type="button" className="primary-button empty-action" onClick={() => void startNewManifest()} disabled={busy}>
               {busy ? 'Loading…' : 'Create Rig manifest'}
             </button>
@@ -205,6 +271,7 @@ export default function App() {
               <div><dt>Source</dt><dd>{source === 'api' ? 'Validated preview API' : 'Local diagnostic file'}</dd></div>
               <div><dt>Fingerprint</dt><dd className="mono">{scene.geometry_fingerprint.slice(0, 12)}…</dd></div>
               <div><dt>Components</dt><dd>{scene.items.length}</dd></div>
+              <div><dt>Experiment</dt><dd>{experiment ? 'draft ready' : 'not attached'}</dd></div>
             </dl>
             <h3>Components</h3>
             <div className="component-list">

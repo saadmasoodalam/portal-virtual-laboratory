@@ -45,6 +45,42 @@ export interface MaterialCatalog {
   materials: MaterialCatalogItem[];
 }
 
+export type DriveMode = 'off' | 'dc' | 'harmonic';
+
+export interface CoilDriveState {
+  mode: DriveMode;
+  current_a: number;
+  polarity: -1 | 1;
+  frequency_hz: number | null;
+  phase_rad: number;
+  omega_sign: -1 | 1;
+}
+
+export interface ExperimentConfig {
+  experiment_id: string;
+  rig_id: string;
+  purpose: 'baseline' | 'calibration' | 'validation' | 'sweep';
+  medium: 'air' | 'distilled_water' | 'saline_0p9';
+  copper_boundary_state: 'open' | 'closed';
+  coil_a: CoilDriveState;
+  coil_b: CoilDriveState;
+  duration_s: number;
+  repetitions: number;
+  randomization_seed: number;
+  solver_fidelity: 'exploratory' | 'hardware_fidelity';
+  material_library_fingerprint: string;
+  rig_definition_fingerprint: string;
+  biological_testing: false;
+  notes: string;
+}
+
+export interface ExperimentValidationResult {
+  accepted: true;
+  physics_state_hash: string;
+  solver_execution: false;
+  experiment: ExperimentConfig;
+}
+
 const configuredBase = (import.meta.env.VITE_PVL_API_BASE_URL ?? '').trim();
 const apiBase = configuredBase.endsWith('/') ? configuredBase.slice(0, -1) : configuredBase;
 
@@ -59,15 +95,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function requireString(record: Record<string, unknown>, key: string): string {
   const value = record[key];
   if (typeof value !== 'string' || value.length === 0) {
-    throw new Error(`Preview API response field ${key} must be a non-empty string.`);
+    throw new Error(`API response field ${key} must be a non-empty string.`);
   }
+  return value;
+}
+
+function requireNumber(record: Record<string, unknown>, key: string): number {
+  const value = record[key];
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`API response field ${key} must be a finite number.`);
   return value;
 }
 
 function requireBoolean(record: Record<string, unknown>, key: string): boolean {
   const value = record[key];
   if (typeof value !== 'boolean') {
-    throw new Error(`Preview API response field ${key} must be boolean.`);
+    throw new Error(`API response field ${key} must be boolean.`);
   }
   return value;
 }
@@ -75,9 +117,15 @@ function requireBoolean(record: Record<string, unknown>, key: string): boolean {
 function requireStringArray(record: Record<string, unknown>, key: string): string[] {
   const value = record[key];
   if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string')) {
-    throw new Error(`Preview API response field ${key} must be a string array.`);
+    throw new Error(`API response field ${key} must be a string array.`);
   }
   return [...value];
+}
+
+function requireEnum<T extends string>(record: Record<string, unknown>, key: string, allowed: readonly T[]): T {
+  const value = requireString(record, key);
+  if (!allowed.includes(value as T)) throw new Error(`API response field ${key} contains unsupported value ${value}.`);
+  return value as T;
 }
 
 function parseReadiness(value: unknown): PreviewReadiness {
@@ -117,12 +165,11 @@ function parseMaterialCatalog(value: unknown): MaterialCatalog {
     library_fingerprint: requireString(value, 'library_fingerprint'),
     materials: materials.map((entry) => {
       if (!isRecord(entry)) throw new Error('Material catalog entry must be an object.');
-      const category = requireString(entry, 'category');
-      if (!['gas', 'metal', 'glass', 'liquid'].includes(category)) throw new Error(`Unknown material category: ${category}`);
+      const category = requireEnum(entry, 'category', ['gas', 'metal', 'glass', 'liquid'] as const);
       return {
         material_id: requireString(entry, 'material_id'),
         display_name: requireString(entry, 'display_name'),
-        category: category as MaterialCategory,
+        category,
         model_kind: requireString(entry, 'model_kind'),
         provenance_status: requireString(entry, 'provenance_status'),
         hardware_fidelity_data: requireBoolean(entry, 'hardware_fidelity_data'),
@@ -132,12 +179,54 @@ function parseMaterialCatalog(value: unknown): MaterialCatalog {
   };
 }
 
-function describeRejectedRequest(status: number, payload: unknown): string {
-  if (!isRecord(payload) || !isRecord(payload.detail)) {
-    return `Preview API rejected the Rig manifest (HTTP ${status}).`;
+function parseCoilDrive(value: unknown): CoilDriveState {
+  if (!isRecord(value)) throw new Error('Experiment coil drive must be an object.');
+  const polarity = requireNumber(value, 'polarity');
+  const omegaSign = requireNumber(value, 'omega_sign');
+  const frequency = value.frequency_hz;
+  if (frequency !== null && (typeof frequency !== 'number' || !Number.isFinite(frequency))) {
+    throw new Error('Experiment frequency_hz must be null or a finite number.');
   }
+  if (polarity !== -1 && polarity !== 1) throw new Error('Experiment polarity must be -1 or +1.');
+  if (omegaSign !== -1 && omegaSign !== 1) throw new Error('Experiment omega_sign must be -1 or +1.');
+  return {
+    mode: requireEnum(value, 'mode', ['off', 'dc', 'harmonic'] as const),
+    current_a: requireNumber(value, 'current_a'),
+    polarity,
+    frequency_hz: frequency,
+    phase_rad: requireNumber(value, 'phase_rad'),
+    omega_sign: omegaSign,
+  };
+}
 
+function parseExperimentConfig(value: unknown): ExperimentConfig {
+  if (!isRecord(value)) throw new Error('Experiment payload must be an object.');
+  if (value.biological_testing !== false) throw new Error('Experiment boundary violation: biological_testing must be false.');
+  return {
+    experiment_id: requireString(value, 'experiment_id'),
+    rig_id: requireString(value, 'rig_id'),
+    purpose: requireEnum(value, 'purpose', ['baseline', 'calibration', 'validation', 'sweep'] as const),
+    medium: requireEnum(value, 'medium', ['air', 'distilled_water', 'saline_0p9'] as const),
+    copper_boundary_state: requireEnum(value, 'copper_boundary_state', ['open', 'closed'] as const),
+    coil_a: parseCoilDrive(value.coil_a),
+    coil_b: parseCoilDrive(value.coil_b),
+    duration_s: requireNumber(value, 'duration_s'),
+    repetitions: requireNumber(value, 'repetitions'),
+    randomization_seed: requireNumber(value, 'randomization_seed'),
+    solver_fidelity: requireEnum(value, 'solver_fidelity', ['exploratory', 'hardware_fidelity'] as const),
+    material_library_fingerprint: requireString(value, 'material_library_fingerprint'),
+    rig_definition_fingerprint: requireString(value, 'rig_definition_fingerprint'),
+    biological_testing: false,
+    notes: typeof value.notes === 'string' ? value.notes : '',
+  };
+}
+
+function describeRejectedRequest(status: number, payload: unknown, label: string): string {
+  if (!isRecord(payload)) return `${label} rejected the request (HTTP ${status}).`;
   const detail = payload.detail;
+  if (typeof detail === 'string') return `${label} rejected the request (HTTP ${status}): ${detail}`;
+  if (!isRecord(detail)) return `${label} rejected the request (HTTP ${status}).`;
+  const code = typeof detail.code === 'string' ? detail.code : null;
   const reasons = Array.isArray(detail.reasons)
     ? detail.reasons.filter((entry): entry is string => typeof entry === 'string')
     : [];
@@ -145,8 +234,8 @@ function describeRejectedRequest(status: number, payload: unknown): string {
   const missing = readiness && Array.isArray(readiness.missing_required_measurements)
     ? readiness.missing_required_measurements.filter((entry): entry is string => typeof entry === 'string')
     : [];
-
-  const parts = [`Preview API rejected the Rig manifest (HTTP ${status})`];
+  const parts = [`${label} rejected the request (HTTP ${status})`];
+  if (code) parts.push(`code: ${code}`);
   if (reasons.length) parts.push(`reasons: ${reasons.join(', ')}`);
   if (missing.length) parts.push(`missing measurements: ${missing.join(', ')}`);
   return `${parts.join('; ')}.`;
@@ -156,7 +245,7 @@ async function readJson(response: Response): Promise<unknown> {
   try {
     return await response.json();
   } catch {
-    throw new Error(`Preview API returned non-JSON content (HTTP ${response.status}).`);
+    throw new Error(`API returned non-JSON content (HTTP ${response.status}).`);
   }
 }
 
@@ -201,6 +290,39 @@ export async function requestRigPreview(rigManifest: unknown, signal?: AbortSign
     signal,
   });
   const payload = await readJson(response);
-  if (!response.ok) throw new Error(describeRejectedRequest(response.status, payload));
+  if (!response.ok) throw new Error(describeRejectedRequest(response.status, payload, 'Preview API'));
   return parseApiResult(payload);
+}
+
+export async function fetchExperimentTemplate(rigManifest: unknown, signal?: AbortSignal): Promise<ExperimentConfig> {
+  const response = await fetch(endpoint('/api/v1/experiment/template'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(rigManifest),
+    signal,
+  });
+  const payload = await readJson(response);
+  if (!response.ok) throw new Error(describeRejectedRequest(response.status, payload, 'Experiment API'));
+  return parseExperimentConfig(payload);
+}
+
+export async function validateExperiment(experiment: ExperimentConfig, signal?: AbortSignal): Promise<ExperimentValidationResult> {
+  const response = await fetch(endpoint('/api/v1/experiment/validate'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(experiment),
+    signal,
+  });
+  const payload = await readJson(response);
+  if (!response.ok) throw new Error(describeRejectedRequest(response.status, payload, 'Experiment API'));
+  if (!isRecord(payload)) throw new Error('Experiment validation response must be an object.');
+  if (payload.accepted !== true || payload.solver_execution !== false) {
+    throw new Error('Experiment API boundary violation: validation must be accepted without solver execution.');
+  }
+  return {
+    accepted: true,
+    physics_state_hash: requireString(payload, 'physics_state_hash'),
+    solver_execution: false,
+    experiment: parseExperimentConfig(payload.experiment),
+  };
 }

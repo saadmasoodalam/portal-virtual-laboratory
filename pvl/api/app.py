@@ -3,10 +3,18 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict
 
+from pvl.experiments.models import (
+    BoundaryCircuitState,
+    ExperimentConfig,
+    ExperimentPurpose,
+    SampleMedium,
+    SolverFidelity,
+)
 from pvl.geometry.adapter import GeometryAdapterMode, adapter_status, build_preview_from_rig
 from pvl.geometry.preview import PreviewScene
 from pvl.materials.library import MaterialLibrary, load_builtin_material_library
 from pvl.materials.models import MaterialCategory, MaterialDataStatus, MaterialModelKind
+from pvl.rig.fingerprint import rig_definition_fingerprint
 from pvl.rig.schema import ReadinessReport, RigV1Schema
 
 
@@ -40,6 +48,48 @@ class MaterialCatalogResponse(BaseModel):
     library_version: str
     library_fingerprint: str
     materials: tuple[MaterialCatalogItem, ...]
+
+
+class ExperimentValidationResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    accepted: bool = True
+    configuration_hash: str
+    physics_state_hash: str
+    solver_execution: bool = False
+    experiment: ExperimentConfig
+
+
+def _experiment_medium(rig: RigV1Schema) -> SampleMedium:
+    by_material = {medium.material_id: medium for medium in SampleMedium}
+    try:
+        return by_material[rig.sample_chamber.medium_material_id]
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "experiment_medium_unsupported",
+                "material_id": rig.sample_chamber.medium_material_id,
+                "supported_material_ids": sorted(by_material),
+            },
+        ) from exc
+
+
+def _experiment_template(rig: RigV1Schema, library: MaterialLibrary) -> ExperimentConfig:
+    return ExperimentConfig(
+        experiment_id="experiment-001",
+        rig_id=rig.rig_id,
+        purpose=ExperimentPurpose.BASELINE,
+        medium=_experiment_medium(rig),
+        copper_boundary_state=(
+            BoundaryCircuitState.OPEN if rig.copper_boundary.baseline_open_loop else BoundaryCircuitState.CLOSED
+        ),
+        duration_s=60.0,
+        repetitions=3,
+        randomization_seed=0,
+        solver_fidelity=SolverFidelity.EXPLORATORY,
+        material_library_fingerprint=library.fingerprint_sha256(),
+        rig_definition_fingerprint=rig_definition_fingerprint(rig),
+    )
 
 
 def create_app(materials: MaterialLibrary | None = None) -> FastAPI:
@@ -103,6 +153,20 @@ def create_app(materials: MaterialLibrary | None = None) -> FastAPI:
                 material_library_fingerprint=library.fingerprint_sha256(),
             ),
             scene=build_preview_from_rig(rig, library),
+        )
+
+    @application.post("/api/v1/experiment/template", response_model=ExperimentConfig)
+    def experiment_template(rig: RigV1Schema) -> ExperimentConfig:
+        """Create a solver-disabled experiment draft tied to the exact Rig and material-library fingerprints."""
+        return _experiment_template(rig, library)
+
+    @application.post("/api/v1/experiment/validate", response_model=ExperimentValidationResponse)
+    def experiment_validate(experiment: ExperimentConfig) -> ExperimentValidationResponse:
+        """Validate the declared experiment state without scheduling or executing a solver."""
+        return ExperimentValidationResponse(
+            configuration_hash=experiment.configuration_hash(),
+            physics_state_hash=experiment.physics_state_hash(),
+            experiment=experiment,
         )
 
     return application
