@@ -191,6 +191,7 @@ def run_rig_dc_mesh_and_domain_convergence(
     winding_mesh_size_m: float | None = None,
     steel_mesh_size_m: float | None = None,
     probe_y_m: tuple[float, ...] = (-0.10, -0.05, 0.0, 0.05, 0.10),
+    axis_samples: int = 801,
     executables: ExecutableSet | None = None,
 ) -> tuple[list[RigDcConvergencePoint], list[RigDcConvergencePoint], RigDcConvergenceGate]:
     if len(mesh_sizes_m) < 3 or len(air_margins) < 3:
@@ -201,6 +202,8 @@ def run_rig_dc_mesh_and_domain_convergence(
         raise ValueError("air margins must strictly increase")
     if shared_mesh_size_m not in mesh_sizes_m or shared_air_margin not in air_margins:
         raise ValueError("shared mesh/domain baseline must be present in both retained sequences")
+    if axis_samples < 101:
+        raise ValueError("complete-Rig convergence requires at least 101 axis samples")
 
     exe = executables or discover_executables()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -224,6 +227,7 @@ def run_rig_dc_mesh_and_domain_convergence(
             config,
             output_dir / label,
             executables=exe,
+            axis_samples=axis_samples,
         )
         point = _point(result, config, probe_y_m)
         cache[key] = point
@@ -245,6 +249,7 @@ def run_rig_dc_mesh_and_domain_convergence(
     gate = evaluate_rig_dc_convergence_gate(mesh_points, domain_points)
     payload = {
         "probe_y_m": list(probe_y_m),
+        "axis_samples": axis_samples,
         "mesh_sequence": [point.__dict__ for point in mesh_points],
         "domain_sequence": [point.__dict__ for point in domain_points],
         "local_refinement": {
