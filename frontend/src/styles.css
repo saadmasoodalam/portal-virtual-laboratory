@@ -156,6 +156,24 @@ button { color: inherit; }
 .editor-status-grid span { display: block; color: #718a9a; font-size: .68rem; text-transform: uppercase; letter-spacing: .06em; }
 .editor-status-grid strong { display: block; margin-top: 5px; font-size: .86rem; overflow-wrap: anywhere; }
 .editor-notice { margin-bottom: 14px; padding: 10px 12px; border: 1px solid #6c5b2c; border-radius: 8px; background: #251f0e; color: #dcc77d; font-size: .8rem; line-height: 1.5; }
+
+.configuration-panel { margin: 14px 0; border: 1px solid #244457; border-radius: 10px; overflow: hidden; background: #07131c; }
+.configuration-panel .measurement-group-heading { align-items: flex-start; }
+.configuration-panel .eyebrow { margin-bottom: 4px; }
+.configuration-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 12px; }
+.config-field { display: grid; gap: 5px; padding: 10px; border: 1px solid #203b4d; border-radius: 8px; background: #081721; }
+.config-field > span { color: #9fb5c3; font-size: .72rem; font-weight: 700; }
+.config-field select { min-height: 36px; padding: 6px 8px; border: 1px solid #315064; border-radius: 6px; background: #07121a; color: #d8e5ed; }
+.config-field small { color: #718a9a; font-size: .66rem; line-height: 1.4; }
+.config-field .config-warning { color: #e1b36c; }
+.boundary-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 0 12px 12px; }
+.toggle-card { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 9px; align-items: start; padding: 11px; border: 1px solid #203b4d; border-radius: 8px; background: #081721; }
+.toggle-card input { margin-top: 3px; accent-color: #4bb9ff; }
+.toggle-card strong, .toggle-card small { display: block; }
+.toggle-card strong { font-size: .76rem; }
+.toggle-card small { margin-top: 4px; color: #718a9a; font-size: .68rem; line-height: 1.4; }
+.configuration-panel .editor-notice { margin: 0 12px 12px; }
+
 .measurement-groups { display: grid; gap: 12px; }
 .measurement-group { border: 1px solid #1d3647; border-radius: 10px; overflow: hidden; }
 .measurement-group-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; background: #0a1a25; }
@@ -202,6 +220,7 @@ button { color: inherit; }
   .inspector-panel { grid-column: 1 / -1; max-height: 300px; }
   .viewer-panel { min-height: 560px; }
   .editor-toolbar { flex-direction: column; }
+  .configuration-grid, .boundary-controls { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 720px) {
