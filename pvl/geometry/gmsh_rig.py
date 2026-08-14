@@ -14,10 +14,11 @@ from pvl.geometry.constructive import (
 )
 
 
-RIG_GMSH_SCHEMA_VERSION = "pvl-rig-gmsh-v1"
+RIG_GMSH_SCHEMA_VERSION = "pvl-rig-gmsh-v2"
 AIR_VOLUME_TAG = 900
 AIR_SOURCE_TAG = 9000
 AIR_PHYSICAL_TAG = 1
+OUTER_BOUNDARY_PHYSICAL_TAG = 5000
 
 
 class RigGmshConfig(FrozenModel):
@@ -32,7 +33,7 @@ class RigGmshConfig(FrozenModel):
         if self.minimum_characteristic_length_m > self.characteristic_length_m:
             raise ValueError("minimum characteristic length cannot exceed global characteristic length")
         if self.msh_version != "2.2":
-            raise ValueError("PVL-2P currently validates only MSH 2.2 output")
+            raise ValueError("PVL currently validates only MSH 2.2 output")
         return self
 
 
@@ -55,11 +56,14 @@ class RigGmshManifest(FrozenModel):
     air_physical_name: str = "PVL_Air"
     air_physical_tag: int = AIR_PHYSICAL_TAG
     air_volume_tag: int = AIR_VOLUME_TAG
+    outer_boundary_physical_name: str = "PVL_OuterBoundary"
+    outer_boundary_physical_tag: int = OUTER_BOUNDARY_PHYSICAL_TAG
     air_bounds_m: tuple[float, float, float, float, float, float]
     physical_regions: tuple[RigPhysicalRegion, ...]
 
     @property
     def required_physical_names(self) -> tuple[str, ...]:
+        """Required 3D physical-volume names; the outer boundary is a 2D physical group."""
         return (self.air_physical_name,) + tuple(region.physical_name for region in self.physical_regions)
 
 
@@ -237,7 +241,7 @@ def build_gmsh_manifest(topology: RigConstructiveTopology, config: RigGmshConfig
 def render_complete_rig_geo(topology: RigConstructiveTopology, config: RigGmshConfig) -> tuple[str, RigGmshManifest]:
     manifest = build_gmsh_manifest(topology, config)
     lines = [
-        "// PVL-2P complete-Rig exploratory Gmsh geometry.",
+        "// PVL complete-Rig exploratory Gmsh geometry.",
         "// Ordinary geometry/meshing only. No GetDP solve and no Portal Hypothesis term.",
         'SetFactory("OpenCASCADE");',
         "Geometry.OCCBooleanPreserveNumbering = 1;",
@@ -258,15 +262,30 @@ def render_complete_rig_geo(topology: RigConstructiveTopology, config: RigGmshCo
         lines.append("")
 
     xmin, xmax, ymin, ymax, zmin, zmax = manifest.air_bounds_m
+    volume_tags = ",".join(str(region.volume_tag) for region in manifest.physical_regions)
+    extent = max(xmax - xmin, ymax - ymin, zmax - zmin)
+    boundary_eps = max(1e-9, extent * 1e-7)
     lines.extend([
         "// Surrounding air before conformal fragmentation.",
         f"Box({AIR_SOURCE_TAG}) = {{{_fmt(xmin)}, {_fmt(ymin)}, {_fmt(zmin)}, {_fmt(xmax - xmin)}, {_fmt(ymax - ymin)}, {_fmt(zmax - zmin)}}};",
-        f"BooleanDifference({AIR_VOLUME_TAG}) = {{ Volume{{{AIR_SOURCE_TAG}}}; Delete; }}{{ Volume{{{','.join(str(region.volume_tag) for region in manifest.physical_regions)}}}; }};",
+        f"BooleanDifference({AIR_VOLUME_TAG}) = {{ Volume{{{AIR_SOURCE_TAG}}}; Delete; }}{{ Volume{{{volume_tags}}}; }};",
         "",
         "// Fragment retained material volumes against the air cavity interfaces so later FEM",
         "// formulations see one conformal topological model. OCC numbering preservation is",
-        "// validated by PVL's physical-region mesh gate below.",
-        f"allFragments() = BooleanFragments{{ Volume{{{AIR_VOLUME_TAG}}}; Delete; }}{{ Volume{{{','.join(str(region.volume_tag) for region in manifest.physical_regions)}}}; Delete; }};",
+        "// validated by PVL's physical-region mesh gate.",
+        f"allFragments() = BooleanFragments{{ Volume{{{AIR_VOLUME_TAG}}}; Delete; }}{{ Volume{{{volume_tags}}}; Delete; }};",
+        "",
+        "// PVL-2Q identifies only the six external faces of the padded air box. Material",
+        "// interfaces cannot enter these bounding slabs because all material primitives are",
+        "// strictly contained by the air padding and were checked by PVL-2P.",
+        f"bndEps = {_fmt(boundary_eps)};",
+        "outerBnd() = {};",
+        f"outerBnd() += Surface In BoundingBox{{{_fmt(xmin - boundary_eps)}, {_fmt(ymin - boundary_eps)}, {_fmt(zmin - boundary_eps)}, {_fmt(xmin + boundary_eps)}, {_fmt(ymax + boundary_eps)}, {_fmt(zmax + boundary_eps)}}};",
+        f"outerBnd() += Surface In BoundingBox{{{_fmt(xmax - boundary_eps)}, {_fmt(ymin - boundary_eps)}, {_fmt(zmin - boundary_eps)}, {_fmt(xmax + boundary_eps)}, {_fmt(ymax + boundary_eps)}, {_fmt(zmax + boundary_eps)}}};",
+        f"outerBnd() += Surface In BoundingBox{{{_fmt(xmin - boundary_eps)}, {_fmt(ymin - boundary_eps)}, {_fmt(zmin - boundary_eps)}, {_fmt(xmax + boundary_eps)}, {_fmt(ymin + boundary_eps)}, {_fmt(zmax + boundary_eps)}}};",
+        f"outerBnd() += Surface In BoundingBox{{{_fmt(xmin - boundary_eps)}, {_fmt(ymax - boundary_eps)}, {_fmt(zmin - boundary_eps)}, {_fmt(xmax + boundary_eps)}, {_fmt(ymax + boundary_eps)}, {_fmt(zmax + boundary_eps)}}};",
+        f"outerBnd() += Surface In BoundingBox{{{_fmt(xmin - boundary_eps)}, {_fmt(ymin - boundary_eps)}, {_fmt(zmin - boundary_eps)}, {_fmt(xmax + boundary_eps)}, {_fmt(ymax + boundary_eps)}, {_fmt(zmin + boundary_eps)}}};",
+        f"outerBnd() += Surface In BoundingBox{{{_fmt(xmin - boundary_eps)}, {_fmt(ymin - boundary_eps)}, {_fmt(zmax - boundary_eps)}, {_fmt(xmax + boundary_eps)}, {_fmt(ymax + boundary_eps)}, {_fmt(zmax + boundary_eps)}}};",
         "",
         f'Physical Volume("{manifest.air_physical_name}", {manifest.air_physical_tag}) = {{{manifest.air_volume_tag}}};',
     ])
@@ -275,8 +294,9 @@ def render_complete_rig_geo(topology: RigConstructiveTopology, config: RigGmshCo
             f'Physical Volume("{region.physical_name}", {region.physical_tag}) = {{{region.volume_tag}}};'
         )
     lines.extend([
+        f'Physical Surface("{manifest.outer_boundary_physical_name}", {manifest.outer_boundary_physical_tag}) = {{outerBnd()}};',
         "",
-        "// MSH2 stores physical-volume membership used by PVL's mesh integrity parser.",
+        "// MSH2 stores physical membership used by PVL's independent integrity parsers.",
         "Mesh.SaveAll = 0;",
         "Mesh.Optimize = 1;",
         "",
