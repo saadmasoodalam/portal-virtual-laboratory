@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from pvl.api.results import build_results_router
 from pvl.materials.library import MaterialLibrary
 from pvl.orchestrator.execution import PackageIntegrityError
 from pvl.orchestrator.jobs import MatrixJobStatus, enqueue_dc_matrix_job, load_matrix_job_status
@@ -60,9 +61,17 @@ def _response(status: MatrixJobStatus) -> MatrixJobStatusResponse:
 
 
 def build_matrix_jobs_router(*, materials: MaterialLibrary, results_root: Path) -> APIRouter:
-    router = APIRouter(prefix="/api/v1/experiment/matrix/jobs", tags=["matrix-jobs"])
+    # ``app.py`` already includes this router bundle. Keep the bundle prefix-free so it can also
+    # register the trusted scientific result catalog without forcing result routes underneath the
+    # matrix-job URL namespace.
+    router = APIRouter()
 
-    @router.post("", response_model=MatrixJobStatusResponse, status_code=202)
+    @router.post(
+        "/api/v1/experiment/matrix/jobs",
+        response_model=MatrixJobStatusResponse,
+        status_code=202,
+        tags=["matrix-jobs"],
+    )
     def create_matrix_job(request: MatrixJobCreateRequest) -> MatrixJobStatusResponse:
         package_root = results_root / request.experiment_id / "packages" / request.package_id
         try:
@@ -90,7 +99,11 @@ def build_matrix_jobs_router(*, materials: MaterialLibrary, results_root: Path) 
             ) from exc
         return _response(status)
 
-    @router.get("/{experiment_id}/{job_id}", response_model=MatrixJobStatusResponse)
+    @router.get(
+        "/api/v1/experiment/matrix/jobs/{experiment_id}/{job_id}",
+        response_model=MatrixJobStatusResponse,
+        tags=["matrix-jobs"],
+    )
     def matrix_job_status(experiment_id: str, job_id: str) -> MatrixJobStatusResponse:
         try:
             status = load_matrix_job_status(
@@ -110,4 +123,5 @@ def build_matrix_jobs_router(*, materials: MaterialLibrary, results_root: Path) 
             ) from exc
         return _response(status)
 
+    router.include_router(build_results_router(results_root=results_root))
     return router
