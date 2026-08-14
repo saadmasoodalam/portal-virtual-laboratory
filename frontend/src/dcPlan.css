@@ -22,13 +22,39 @@
   border-radius: 8px;
   background: #081721;
 }
-.dc-plan-controls span, .plan-summary-grid span { color: #718a9a; font-size: .66rem; text-transform: uppercase; letter-spacing: .05em; }
+.dc-plan-controls span, .plan-summary-grid span, .package-persistence-panel span, .package-success span { color: #718a9a; font-size: .66rem; text-transform: uppercase; letter-spacing: .05em; }
 .dc-plan-controls strong, .dc-plan-controls small { display: block; }
 .dc-plan-controls small { color: #607b8c; font-size: .66rem; line-height: 1.35; }
 .dc-plan-controls input { width: 100%; min-height: 36px; padding: 7px 9px; border: 1px solid #315064; border-radius: 6px; background: #07121a; color: #d8e5ed; }
 .plan-summary-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
 .plan-summary-grid > div { padding: 10px; border: 1px solid #203b4d; border-radius: 8px; background: #081721; }
 .plan-summary-grid strong { display: block; margin-top: 5px; font-size: .78rem; overflow-wrap: anywhere; }
+.package-persistence-panel {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 14px;
+  align-items: center;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid #315064;
+  border-radius: 9px;
+  background: #081721;
+}
+.package-persistence-panel strong, .package-persistence-panel small { display: block; }
+.package-persistence-panel strong { margin-top: 5px; font-size: .82rem; }
+.package-persistence-panel small { margin-top: 4px; color: #607b8c; font-size: .68rem; line-height: 1.4; }
+.package-success {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 10px;
+  border: 1px solid #2d6c4c;
+  border-radius: 9px;
+  background: #0d2519;
+}
+.package-success > div { min-width: 0; }
+.package-success code, .package-success strong { display: block; margin-top: 5px; color: #c8efda; overflow-wrap: anywhere; font-size: .72rem; }
 .plan-table-wrap { overflow-x: auto; border: 1px solid #203b4d; border-radius: 9px; }
 .plan-table { width: 100%; border-collapse: collapse; min-width: 760px; font-size: .73rem; }
 .plan-table th, .plan-table td { padding: 8px 10px; border-bottom: 1px solid rgba(49, 79, 98, .35); text-align: left; vertical-align: top; }
@@ -43,5 +69,5 @@
 }
 @media (max-width: 720px) {
   .dc-plan-editor { padding: 12px; }
-  .dc-plan-controls, .plan-summary-grid { grid-template-columns: 1fr; }
+  .dc-plan-controls, .plan-summary-grid, .package-success, .package-persistence-panel { grid-template-columns: 1fr; }
 }

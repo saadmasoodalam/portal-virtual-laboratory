@@ -29,8 +29,18 @@ class RunStorageLayout(FrozenModel):
     manifest_json: str
 
 
-def run_storage_layout(results_root: Path, experiment_id: str, run_id: str) -> RunStorageLayout:
-    root = results_root / experiment_id / run_id
+class ExperimentPackageLayout(FrozenModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    root: str
+    experiment_json: str
+    run_matrix_json: str
+    package_manifest_json: str
+    checksums_json: str
+    runs_dir: str
+
+
+def _run_layout_from_root(root: Path) -> RunStorageLayout:
     return RunStorageLayout(
         root=str(root),
         experiment_json=str(root / "experiment.json"),
@@ -48,6 +58,26 @@ def run_storage_layout(results_root: Path, experiment_id: str, run_id: str) -> R
         environment_json=str(root / "environment.json"),
         manifest_json=str(root / "manifest.json"),
     )
+
+
+def run_storage_layout(results_root: Path, experiment_id: str, run_id: str) -> RunStorageLayout:
+    return _run_layout_from_root(results_root / experiment_id / run_id)
+
+
+def experiment_package_layout(results_root: Path, experiment_id: str, package_id: str) -> ExperimentPackageLayout:
+    root = results_root / experiment_id / "packages" / package_id
+    return ExperimentPackageLayout(
+        root=str(root),
+        experiment_json=str(root / "experiment.json"),
+        run_matrix_json=str(root / "run_matrix.json"),
+        package_manifest_json=str(root / "package_manifest.json"),
+        checksums_json=str(root / "checksums.json"),
+        runs_dir=str(root / "runs"),
+    )
+
+
+def package_run_storage_layout(package: ExperimentPackageLayout, run_id: str) -> RunStorageLayout:
+    return _run_layout_from_root(Path(package.runs_dir) / run_id)
 
 
 def initialize_run_storage(layout: RunStorageLayout, manifest: RunManifest) -> Path:
