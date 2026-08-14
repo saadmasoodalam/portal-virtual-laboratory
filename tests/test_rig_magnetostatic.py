@@ -51,6 +51,32 @@ def test_gmsh_geometry_exposes_six_face_outer_boundary_physical_group():
     assert manifest.outer_boundary_physical_tag == 5000
 
 
+def test_complete_rig_local_mesh_controls_must_refine_not_coarsen_global_mesh():
+    with pytest.raises(ValueError, match="must refine, not coarsen"):
+        RigGmshConfig(
+            characteristic_length_m=0.012,
+            winding_characteristic_length_m=0.020,
+        )
+
+
+def test_complete_rig_geometry_emits_explicit_winding_and_steel_local_mesh_targets():
+    _, topology, _, _, _ = _state()
+    text, _ = render_complete_rig_geo(
+        topology,
+        RigGmshConfig(
+            characteristic_length_m=0.012,
+            winding_characteristic_length_m=0.002,
+            steel_characteristic_length_m=0.005,
+        ),
+    )
+    assert "Mesh.MeshSizeFromPoints = 1;" in text
+    assert "Local target mesh size on winding envelopes" in text
+    assert "Local target mesh size on steel frame" in text
+    assert "= 0.002;" in text
+    assert "= 0.0050000000000000001;" in text or "= 0.005;" in text
+    assert text.count("MeshSize{ PointsOf{ Volume{") == 2
+
+
 def test_homogenized_winding_source_integrates_to_ampere_turns_without_double_counting_turns():
     _, topology, _, manifest, experiment = _state(a_current=1.0)
     source_a, source_b = build_winding_sources(experiment, topology, manifest)
