@@ -30,11 +30,28 @@ class Direction3D(BaseModel):
 class FrameGeometry(BaseModel):
     model_config = ConfigDict(extra="forbid")
     material_id: str = "mild_steel_linear_baseline"
+    # Compatibility semantics retained by PVL-2O:
+    # outer_width = top-view X span; outer_depth = top-view Y span;
+    # outer_height = declared Z envelope; member_thickness = actual bar Z extrusion.
     outer_width: LengthMeasurement = Field(default_factory=LengthMeasurement)
     outer_depth: LengthMeasurement = Field(default_factory=LengthMeasurement)
     outer_height: LengthMeasurement = Field(default_factory=LengthMeasurement)
     member_width: LengthMeasurement = Field(default_factory=LengthMeasurement)
     member_thickness: LengthMeasurement = Field(default_factory=LengthMeasurement)
+
+
+class BoundaryGapSide(StrEnum):
+    """Top-view side containing the deliberate copper-boundary opening.
+
+    The Rig v1 source specifies a deliberate gap but not which side contains it. EAST is the
+    PVL exploratory default so that the choice is explicit, serialized and hashed rather than
+    hidden in constructive geometry code.
+    """
+
+    NORTH = "north"
+    SOUTH = "south"
+    EAST = "east"
+    WEST = "west"
 
 
 class BoundaryGeometry(BaseModel):
@@ -45,6 +62,7 @@ class BoundaryGeometry(BaseModel):
     strip_width: LengthMeasurement = Field(default_factory=LengthMeasurement)
     thickness: LengthMeasurement = Field(default_factory=LengthMeasurement)
     gap_width: LengthMeasurement = Field(default_factory=LengthMeasurement)
+    gap_side: BoundaryGapSide = BoundaryGapSide.EAST
     electrically_isolated_from_frame: bool = True
     baseline_open_loop: bool = True
 
