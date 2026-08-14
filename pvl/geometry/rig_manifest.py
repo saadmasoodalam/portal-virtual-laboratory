@@ -3,6 +3,9 @@ from hashlib import sha256
 import json
 from pydantic import BaseModel, ConfigDict, Field
 
+from pvl.geometry.coordinates import RIG_COORDINATE_CONVENTION_ID
+
+
 class RigShape(StrEnum):
     FRAME_ENVELOPE = "frame_envelope"
     OPEN_RECTANGULAR_LOOP = "open_rectangular_loop"
@@ -10,6 +13,7 @@ class RigShape(StrEnum):
     CYLINDRICAL_VOLUME = "cylindrical_volume"
     WINDING_ENVELOPE = "winding_envelope"
     SENSOR_POINT = "sensor_point"
+
 
 class GeometryComponent(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -22,10 +26,11 @@ class GeometryComponent(BaseModel):
     integer_parameters: dict[str, int] = Field(default_factory=dict)
     metadata: dict[str, str | bool] = Field(default_factory=dict)
 
+
 class RigGeometryManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     rig_id: str
-    convention: str = "right_handed_xyz_si_m"
+    convention: str = RIG_COORDINATE_CONVENTION_ID
     components: tuple[GeometryComponent, ...]
 
     def fingerprint_sha256(self) -> str:
