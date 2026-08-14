@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -19,6 +20,13 @@ from pvl.geometry.adapter import GeometryAdapterMode, adapter_status, build_prev
 from pvl.geometry.preview import PreviewScene
 from pvl.materials.library import MaterialLibrary, load_builtin_material_library
 from pvl.materials.models import MaterialCategory, MaterialDataStatus, MaterialModelKind
+from pvl.orchestrator.execution import (
+    ExecutionGateIssue,
+    PackageIntegrityError,
+    PlannedRunNotFoundError,
+    evaluate_and_persist_single_run_gate,
+)
+from pvl.orchestrator.preflight import SolverRoute
 from pvl.rig.fingerprint import rig_definition_fingerprint
 from pvl.rig.schema import ReadinessReport, RigV1Schema
 
@@ -104,6 +112,33 @@ class ExperimentPackageResponse(BaseModel):
     relative_path: str
     checksummed_files: int
     solver_execution: bool = False
+
+
+class SingleRunGateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    experiment_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    package_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    run_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    rig: RigV1Schema
+    single_run_confirmation: Literal[True]
+
+
+class SingleRunGateResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    job_id: str
+    job_fingerprint: str
+    package_id: str
+    run_id: str
+    solver_route: SolverRoute
+    package_integrity_verified: bool
+    preflight_ready: bool
+    execution_allowed: bool
+    solver_execution: bool
+    single_run_only: bool
+    batch_execution: bool
+    biological_testing: bool
+    issues: tuple[ExecutionGateIssue, ...]
+    relative_execution_path: str
 
 
 def _experiment_medium(rig: RigV1Schema) -> SampleMedium:
@@ -260,6 +295,55 @@ def create_app(materials: MaterialLibrary | None = None, results_root: Path | No
             run_count=package.manifest.run_count,
             relative_path=str(Path(package.layout.root).relative_to(storage_root)),
             checksummed_files=len(package.checksums),
+        )
+
+    @application.post("/api/v1/experiment/execution/single/gate", response_model=SingleRunGateResponse)
+    def experiment_single_run_gate(request: SingleRunGateRequest) -> SingleRunGateResponse:
+        package_root = storage_root / request.experiment_id / "packages" / request.package_id
+        try:
+            result = evaluate_and_persist_single_run_gate(
+                package_root=package_root,
+                run_id=request.run_id,
+                rig=request.rig,
+                materials=library,
+                results_root=storage_root,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "experiment_package_not_found", "message": str(exc)},
+            ) from exc
+        except PlannedRunNotFoundError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "planned_run_not_found", "message": str(exc)},
+            ) from exc
+        except PackageIntegrityError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "experiment_package_integrity_failed", "message": str(exc)},
+            ) from exc
+        except FileExistsError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "single_run_gate_exists", "message": str(exc)},
+            ) from exc
+        manifest = result.manifest
+        return SingleRunGateResponse(
+            job_id=manifest.job_id,
+            job_fingerprint=manifest.job_fingerprint,
+            package_id=manifest.package_id,
+            run_id=manifest.run_id,
+            solver_route=manifest.solver_route,
+            package_integrity_verified=manifest.package_integrity_verified,
+            preflight_ready=manifest.preflight_ready,
+            execution_allowed=manifest.execution_allowed,
+            solver_execution=manifest.solver_execution,
+            single_run_only=manifest.single_run_only,
+            batch_execution=manifest.batch_execution,
+            biological_testing=manifest.biological_testing,
+            issues=manifest.issues,
+            relative_execution_path=str(Path(result.root).relative_to(storage_root)),
         )
 
     return application
