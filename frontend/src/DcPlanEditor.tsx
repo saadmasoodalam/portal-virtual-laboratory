@@ -1,12 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import type { ExperimentConfig } from './api';
 import { planDcExperiment, type DcPlanResult } from './dcPlanApi';
 
 interface DcPlanEditorProps {
   experiment: ExperimentConfig;
-  onBack: () => void;
-  onError: (message: string | null) => void;
 }
 
 function signedCurrent(mode: string, current: number, polarity: number): string {
@@ -14,20 +12,26 @@ function signedCurrent(mode: string, current: number, polarity: number): string 
   return `${polarity * current >= 0 ? '+' : ''}${(polarity * current).toFixed(3)} A`;
 }
 
-export function DcPlanEditor({ experiment, onBack, onError }: DcPlanEditorProps) {
+export function DcPlanEditor({ experiment }: DcPlanEditorProps) {
   const [currentA, setCurrentA] = useState(1.0);
   const [busy, setBusy] = useState(false);
   const [plan, setPlan] = useState<DcPlanResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPlan(null);
+    setError(null);
+  }, [experiment]);
 
   async function buildPlan() {
     setBusy(true);
     setPlan(null);
-    onError(null);
+    setError(null);
     try {
       const result = await planDcExperiment(experiment, currentA);
       setPlan(result);
     } catch (caught) {
-      onError(caught instanceof Error ? caught.message : 'Unable to create DC plan.');
+      setError(caught instanceof Error ? caught.message : 'Unable to create DC plan.');
     } finally {
       setBusy(false);
     }
@@ -54,10 +58,7 @@ export function DcPlanEditor({ experiment, onBack, onError }: DcPlanEditorProps)
             Generate the documented OFF/A/B/same/opposed DC control matrix with a reproducible seeded run order. Planning creates no solver job and executes no FEM calculation.
           </p>
         </div>
-        <div className="editor-actions">
-          <button type="button" className="secondary-button" onClick={onBack}>Back to excitation</button>
-          <button type="button" className="secondary-button" disabled={!plan} onClick={downloadPlan}>Download plan JSON</button>
-        </div>
+        <button type="button" className="secondary-button" disabled={!plan} onClick={downloadPlan}>Download plan JSON</button>
       </div>
 
       <div className="dc-plan-controls">
@@ -71,8 +72,10 @@ export function DcPlanEditor({ experiment, onBack, onError }: DcPlanEditorProps)
       </div>
 
       <div className="editor-notice">
-        Every repetition begins with OFF/OFF, followed by a seeded shuffle of eight active states. Opposed DC states use coil polarity; signed frequency remains +1 for DC. This page cannot run the solver.
+        Every repetition begins with OFF/OFF, followed by a seeded shuffle of eight active states. Opposed DC states use coil polarity; signed frequency remains +1 for DC. Planning cannot run the solver.
       </div>
+
+      {error && <div className="error-panel">{error}</div>}
 
       {plan && (
         <>
@@ -86,9 +89,7 @@ export function DcPlanEditor({ experiment, onBack, onError }: DcPlanEditorProps)
 
           <div className="plan-table-wrap">
             <table className="plan-table">
-              <thead>
-                <tr><th>#</th><th>Rep</th><th>State</th><th>Coil A</th><th>Coil B</th><th>Physics hash</th></tr>
-              </thead>
+              <thead><tr><th>#</th><th>Rep</th><th>State</th><th>Coil A</th><th>Coil B</th><th>Physics hash</th></tr></thead>
               <tbody>
                 {plan.runs.map((run) => (
                   <tr key={run.run_id}>
