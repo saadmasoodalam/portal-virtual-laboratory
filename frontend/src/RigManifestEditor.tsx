@@ -1,5 +1,7 @@
 import { useMemo } from 'react';
 
+import type { MaterialCatalog } from './api';
+import { RigConfigurationEditor } from './RigConfigurationEditor';
 import {
   listMeasurements,
   measurementLabel,
@@ -14,6 +16,7 @@ interface RigManifestEditorProps {
   manifest: Record<string, unknown>;
   sourceName: string;
   busy: boolean;
+  materialCatalog: MaterialCatalog;
   onChange: (manifest: Record<string, unknown>) => void;
   onPreview: () => void;
   onDownload: () => void;
@@ -39,6 +42,7 @@ export function RigManifestEditor({
   manifest,
   sourceName,
   busy,
+  materialCatalog,
   onChange,
   onPreview,
   onDownload,
@@ -65,10 +69,10 @@ export function RigManifestEditor({
     <section className="manifest-editor">
       <div className="editor-toolbar">
         <div>
-          <p className="eyebrow">PVL-2I controlled input</p>
+          <p className="eyebrow">PVL-2J controlled input</p>
           <h2>Rig Manifest Editor</h2>
           <p className="muted editor-intro">
-            Enter only known dimensions and record where each value came from. Illustrative values can generate a preview but do not qualify as hardware-fidelity geometry.
+            Enter only known dimensions, record provenance, and select controlled materials and boundary states from the versioned backend catalog.
           </p>
         </div>
         <div className="editor-actions">
@@ -87,6 +91,8 @@ export function RigManifestEditor({
         <div><span>Illustrative</span><strong>{summary.illustrative}</strong></div>
         <div><span>Measured / supplier</span><strong>{summary.hardwareFidelity}</strong></div>
       </div>
+
+      <RigConfigurationEditor manifest={manifest} catalog={materialCatalog} onChange={onChange} />
 
       {summary.missingRequired > 0 && (
         <div className="editor-notice">
