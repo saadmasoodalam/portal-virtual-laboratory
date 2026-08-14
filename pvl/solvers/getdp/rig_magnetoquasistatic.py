@@ -60,19 +60,13 @@ def build_rig_magnetoquasistatic_model(
 
     source_a = HarmonicWindingSource(
         spatial=_winding_source(
-            "winding:coil_a",
-            topology,
-            manifest,
-            experiment.coil_a.signed_current_a,
+            "winding:coil_a", topology, manifest, experiment.coil_a.signed_current_a
         ),
         phase_rad=experiment.coil_a.canonical_positive_frequency_phase_rad,
     )
     source_b = HarmonicWindingSource(
         spatial=_winding_source(
-            "winding:coil_b",
-            topology,
-            manifest,
-            experiment.coil_b.signed_current_a,
+            "winding:coil_b", topology, manifest, experiment.coil_b.signed_current_a
         ),
         phase_rad=experiment.coil_b.canonical_positive_frequency_phase_rad,
     )
@@ -188,8 +182,8 @@ def render_rig_magnetoquasistatic_pro(
         point = f"{{{px:.17g}, {probe_y:.17g}, {pz:.17g}}}"
         probe_lines.extend(
             [
-                f'      Print[bRe, OnPoint {point}, Format Table, File "b_probe_re_{index:03d}.txt"];',
-                f'      Print[bIm, OnPoint {point}, Format Table, File "b_probe_im_{index:03d}.txt"];',
+                f'      Print[bYRe, OnPoint {point}, Format Table, File "by_probe_re_{index:03d}.txt"];',
+                f'      Print[bYIm, OnPoint {point}, Format Table, File "by_probe_im_{index:03d}.txt"];',
             ]
         )
     probe_block = "\n".join(probe_lines)
@@ -293,11 +287,11 @@ Resolution {{
 PostProcessing {{
   {{ Name MQ; NameOfFormulation Magnetoquasistatics_a_3D;
     Quantity {{
-      {{ Name bRe;
-        Value {{ Term {{ [ Re[{{d a}}] ]; In Vol_Mag; Jacobian Vol; }} }}
+      {{ Name bYRe;
+        Value {{ Term {{ [ Re[CompY[{{d a}}]] ]; In Vol_Mag; Jacobian Vol; }} }}
       }}
-      {{ Name bIm;
-        Value {{ Term {{ [ Im[{{d a}}] ]; In Vol_Mag; Jacobian Vol; }} }}
+      {{ Name bYIm;
+        Value {{ Term {{ [ Im[CompY[{{d a}}]] ]; In Vol_Mag; Jacobian Vol; }} }}
       }}
       {{ Name jRe;
         Value {{ Term {{ [ Re[-sigma[] * Dt[{{a}}]] ]; In Vol_C_Mag; Jacobian Vol; }} }}
@@ -321,10 +315,10 @@ PostProcessing {{
 PostOperation {{
   {{ Name Diagnostics; NameOfPostProcessing MQ;
     Operation {{
-      Print[bRe, OnLine{{{{{px:.17g}, {line_y0:.17g}, {pz:.17g}}}{{{px:.17g}, {line_y1:.17g}, {pz:.17g}}}}}{{{axis_samples}}},
-        Format Table, File "b_axis_re.txt"];
-      Print[bIm, OnLine{{{{{px:.17g}, {line_y0:.17g}, {pz:.17g}}}{{{px:.17g}, {line_y1:.17g}, {pz:.17g}}}}}{{{axis_samples}}},
-        Format Table, File "b_axis_im.txt"];
+      Print[bYRe, OnLine{{{{{px:.17g}, {line_y0:.17g}, {pz:.17g}}}{{{px:.17g}, {line_y1:.17g}, {pz:.17g}}}}}{{{axis_samples}}},
+        Format Table, File "by_axis_re.txt"];
+      Print[bYIm, OnLine{{{{{px:.17g}, {line_y0:.17g}, {pz:.17g}}}{{{px:.17g}, {line_y1:.17g}, {pz:.17g}}}}}{{{axis_samples}}},
+        Format Table, File "by_axis_im.txt"];
 {probe_block}      Print[jRe, OnElementsOf Vol_C_Mag, File "j_passive_re.pos"];
       Print[jIm, OnElementsOf Vol_C_Mag, File "j_passive_im.pos"];
       Print[sourceJ, OnElementsOf Vol_S_Mag, File "source_j.pos"];
