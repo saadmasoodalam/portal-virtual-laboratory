@@ -64,6 +64,8 @@ def evaluate_rig_mesh_gate(
     expected_names = set(expected_by_tag.values())
     observed_names = set(summary.physical_names.values())
     populated = all(summary.tetrahedra_by_physical_tag.get(tag, 0) > 0 for tag in expected_tags)
+    outer_name_ok = summary.surface_physical_names.get(manifest.outer_boundary_physical_tag) == manifest.outer_boundary_physical_name
+    outer_triangles = summary.triangles_by_physical_tag.get(manifest.outer_boundary_physical_tag, 0)
     criteria = {
         "has_nodes": summary.node_count > 0,
         "has_tetrahedra": summary.tetrahedron_count > 0,
@@ -73,14 +75,18 @@ def evaluate_rig_mesh_gate(
         "all_tetra_volumes_positive": summary.minimum_tetra_volume_m3 > minimum_tetra_volume_m3,
         "minimum_mean_ratio_quality": summary.minimum_mean_ratio_quality >= minimum_mean_ratio_quality,
         "air_region_populated": summary.tetrahedra_by_physical_tag.get(manifest.air_physical_tag, 0) > 0,
+        "outer_boundary_physical_name": outer_name_ok,
+        "outer_boundary_triangles_populated": outer_triangles > 0,
         "solver_execution_absent": manifest.solver_execution is False,
     }
     observed: dict[str, float | int | bool] = {
         "nodes": summary.node_count,
         "elements": summary.element_count,
+        "triangles": summary.triangle_count,
         "tetrahedra": summary.tetrahedron_count,
         "expected_physical_volumes": len(expected_tags),
         "observed_physical_volumes": len(observed_tags),
+        "outer_boundary_triangles": outer_triangles,
         "minimum_tetra_volume_m3": summary.minimum_tetra_volume_m3,
         "maximum_tetra_volume_m3": summary.maximum_tetra_volume_m3,
         "minimum_mean_ratio_quality": summary.minimum_mean_ratio_quality,
@@ -136,10 +142,11 @@ def run_complete_rig_mesh(
         "gmsh_config": config.model_dump(mode="json"),
         "summary": summary.model_dump(mode="json"),
         "tetrahedra_by_physical_name": summary.tetrahedra_by_physical_name,
+        "triangles_by_physical_name": summary.triangles_by_physical_name,
         "validation_gate": gate.model_dump(mode="json"),
         "scientific_boundary": (
-            "PVL-2P validates complete-Rig exploratory CAD/mesh topology only. "
-            "No GetDP field solve or Portal Hypothesis term is executed."
+            "PVL complete-Rig geometry validates CAD/mesh topology and an explicit external "
+            "boundary. A GetDP solve is a separate execution gate."
         ),
     }
     (output_dir / "mesh_metrics.json").write_text(
