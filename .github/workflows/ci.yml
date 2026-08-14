@@ -50,6 +50,9 @@ jobs:
       - name: Run complete-Rig harmonic eddy-current smoke
         run: python -m pvl.cli.rig_mq --output results/rig_mq_smoke
 
+      - name: Run complete-Rig magneto-thermal conduction smoke
+        run: python -m pvl.cli.rig_magthe --output results/rig_magthe_smoke
+
       - name: Generate analytical POC-001 artifact
         run: python -m pvl.cli.main poc001 --output results/poc001
 
