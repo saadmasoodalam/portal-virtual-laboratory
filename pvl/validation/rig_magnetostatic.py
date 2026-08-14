@@ -109,7 +109,9 @@ def evaluate_rig_dc_convergence_gate(
         first.characteristic_length_m > second.characteristic_length_m
         for first, second in zip(mesh_points, mesh_points[1:])
     )
-    mesh_nodes_grow = all(first.node_count < second.node_count for first, second in zip(mesh_points, mesh_points[1:]))
+    mesh_nodes_grow = all(
+        first.node_count < second.node_count for first, second in zip(mesh_points, mesh_points[1:])
+    )
     mesh_tets_grow = all(
         first.tetrahedron_count < second.tetrahedron_count
         for first, second in zip(mesh_points, mesh_points[1:])
@@ -175,7 +177,10 @@ def run_rig_dc_mesh_and_domain_convergence(
     materials: MaterialLibrary,
     output_dir: Path,
     *,
-    mesh_sizes_m: tuple[float, ...] = (0.05, 0.04, 0.032),
+    # h=0.05 m was experimentally rejected by Gmsh 4.12.1 for this thin exploratory
+    # topology: it emitted only a surface mesh and returned nonzero. Retain levels at and
+    # below the already validated h=0.04 complete-Rig mesh instead of weakening geometry gates.
+    mesh_sizes_m: tuple[float, ...] = (0.04, 0.035, 0.03),
     air_margins: tuple[float, ...] = (0.25, 0.35, 0.50),
     shared_mesh_size_m: float = 0.04,
     shared_air_margin: float = 0.35,
