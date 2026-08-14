@@ -53,11 +53,14 @@ class RigDcConvergenceGate:
 def _probe_values(
     result: RigMagnetostaticResult, probe_y_m: tuple[float, ...]
 ) -> tuple[float, ...]:
-    y = result.y_m
-    b = result.b_y_t
-    if any(value < y[0] or value > y[-1] for value in probe_y_m):
-        raise ValueError("fixed convergence probe lies outside the solved central-axis line")
-    return tuple(float(np.interp(value, y, b)) for value in probe_y_m)
+    requested = np.asarray(probe_y_m, dtype=float)
+    if result.probe_y_m.size != requested.size or result.probe_b_y_t.size != requested.size:
+        raise ValueError("complete-Rig exact probe result is empty or inconsistent")
+    if not np.allclose(result.probe_y_m, requested, rtol=0.0, atol=1e-10):
+        raise ValueError("complete-Rig exact probe coordinates do not match the convergence contract")
+    if not np.all(np.isfinite(result.probe_b_y_t)):
+        raise ValueError("complete-Rig exact probe result contains non-finite values")
+    return tuple(float(value) for value in result.probe_b_y_t)
 
 
 def _point(
@@ -66,13 +69,17 @@ def _point(
     probe_y_m: tuple[float, ...],
 ) -> RigDcConvergencePoint:
     probes = _probe_values(result, probe_y_m)
+    zero_indices = [index for index, value in enumerate(probe_y_m) if abs(value) <= 1e-14]
+    if len(zero_indices) != 1:
+        raise ValueError("complete-Rig convergence probe contract requires exactly one y=0 probe")
+    center = probes[zero_indices[0]]
     return RigDcConvergencePoint(
         characteristic_length_m=mesh_config.characteristic_length_m,
         air_margin_fraction=mesh_config.air_margin_fraction,
         node_count=result.mesh_run.summary.node_count,
         tetrahedron_count=result.mesh_run.summary.tetrahedron_count,
         probe_b_y_t=probes,
-        center_b_y_t=float(np.interp(0.0, result.y_m, result.b_y_t)),
+        center_b_y_t=center,
         peak_abs_b_t=float(np.max(np.abs(result.b_y_t))),
     )
 
@@ -191,7 +198,6 @@ def run_rig_dc_mesh_and_domain_convergence(
     winding_mesh_size_m: float | None = None,
     steel_mesh_size_m: float | None = None,
     probe_y_m: tuple[float, ...] = (-0.10, -0.05, 0.0, 0.05, 0.10),
-    axis_samples: int = 801,
     executables: ExecutableSet | None = None,
 ) -> tuple[list[RigDcConvergencePoint], list[RigDcConvergencePoint], RigDcConvergenceGate]:
     if len(mesh_sizes_m) < 3 or len(air_margins) < 3:
@@ -202,8 +208,12 @@ def run_rig_dc_mesh_and_domain_convergence(
         raise ValueError("air margins must strictly increase")
     if shared_mesh_size_m not in mesh_sizes_m or shared_air_margin not in air_margins:
         raise ValueError("shared mesh/domain baseline must be present in both retained sequences")
-    if axis_samples < 101:
-        raise ValueError("complete-Rig convergence requires at least 101 axis samples")
+    if len(set(probe_y_m)) != len(probe_y_m):
+        raise ValueError("complete-Rig convergence probe coordinates must be unique")
+    if sum(abs(value) <= 1e-14 for value in probe_y_m) != 1:
+        raise ValueError("complete-Rig convergence requires exactly one y=0 point probe")
+    if not all(np.isfinite(value) for value in probe_y_m):
+        raise ValueError("complete-Rig convergence probe coordinates must be finite")
 
     exe = executables or discover_executables()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -227,7 +237,8 @@ def run_rig_dc_mesh_and_domain_convergence(
             config,
             output_dir / label,
             executables=exe,
-            axis_samples=axis_samples,
+            axis_samples=101,
+            probe_y_m=probe_y_m,
         )
         point = _point(result, config, probe_y_m)
         cache[key] = point
@@ -249,7 +260,7 @@ def run_rig_dc_mesh_and_domain_convergence(
     gate = evaluate_rig_dc_convergence_gate(mesh_points, domain_points)
     payload = {
         "probe_y_m": list(probe_y_m),
-        "axis_samples": axis_samples,
+        "probe_sampling": "GetDP OnPoint exact coordinates",
         "mesh_sequence": [point.__dict__ for point in mesh_points],
         "domain_sequence": [point.__dict__ for point in domain_points],
         "local_refinement": {
