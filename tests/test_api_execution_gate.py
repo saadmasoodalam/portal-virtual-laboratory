@@ -41,7 +41,7 @@ def _persist_package(client: TestClient, rig: RigV1Schema) -> tuple[dict, dict]:
     return package, plan
 
 
-def test_api_records_blocked_active_run_without_solver_outputs(tmp_path: Path):
+def test_api_authorizes_active_magnetostatic_run_without_executing_solver_in_gate(tmp_path: Path):
     client = TestClient(create_app(results_root=tmp_path))
     rig = RigV1Schema()
     _fill_illustrative(rig)
@@ -63,12 +63,12 @@ def test_api_records_blocked_active_run_without_solver_outputs(tmp_path: Path):
     assert payload["solver_route"] == "magnetostatic"
     assert payload["package_integrity_verified"] is True
     assert payload["preflight_ready"] is True
-    assert payload["execution_allowed"] is False
+    assert payload["execution_allowed"] is True
     assert payload["solver_execution"] is False
     assert payload["single_run_only"] is True
     assert payload["batch_execution"] is False
     assert payload["biological_testing"] is False
-    assert [issue["code"] for issue in payload["issues"]] == ["constructive_solver_geometry_unavailable"]
+    assert payload["issues"] == []
 
     root = tmp_path / payload["relative_execution_path"]
     assert (root / "job_manifest.json").is_file()

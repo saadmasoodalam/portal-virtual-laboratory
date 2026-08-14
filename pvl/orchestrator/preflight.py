@@ -4,7 +4,12 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
 
-from pvl.experiments.models import DriveMode, ExperimentConfig, SolverFidelity
+from pvl.experiments.models import (
+    BoundaryCircuitState,
+    DriveMode,
+    ExperimentConfig,
+    SolverFidelity,
+)
 from pvl.materials.library import MaterialLibrary
 from pvl.rig.fingerprint import rig_definition_fingerprint
 from pvl.rig.material_check import check_material_references
@@ -67,6 +72,45 @@ def _solver_route(config: ExperimentConfig) -> tuple[SolverRoute, list[Preflight
     ]
 
 
+def _state_geometry_consistency(config: ExperimentConfig, rig: RigV1Schema) -> list[PreflightIssue]:
+    """Reject experiment states that do not match the constructive Rig snapshot.
+
+    The complete-Rig solver compiles the sample material and copper gap directly from ``rig``. An
+    ExperimentConfig is therefore not allowed to claim a different medium or open/closed boundary
+    while retaining the same Rig fingerprint. Silent disagreement would label one physical mesh as
+    a different experiment state and corrupt comparisons.
+    """
+    issues: list[PreflightIssue] = []
+    if config.medium.material_id != rig.sample_chamber.medium_material_id:
+        issues.append(
+            PreflightIssue(
+                code="sample_medium_geometry_mismatch",
+                severity=IssueSeverity.ERROR,
+                message=(
+                    "experiment sample medium does not match the material compiled into the Rig "
+                    "geometry; create/update the Rig state before solving this medium"
+                ),
+            )
+        )
+    rig_boundary_state = (
+        BoundaryCircuitState.OPEN
+        if rig.copper_boundary.baseline_open_loop
+        else BoundaryCircuitState.CLOSED
+    )
+    if config.copper_boundary_state != rig_boundary_state:
+        issues.append(
+            PreflightIssue(
+                code="copper_boundary_geometry_mismatch",
+                severity=IssueSeverity.ERROR,
+                message=(
+                    "experiment copper boundary state does not match the open/closed topology "
+                    "compiled from the Rig definition"
+                ),
+            )
+        )
+    return issues
+
+
 def preflight_experiment(
     config: ExperimentConfig,
     rig: RigV1Schema,
@@ -118,6 +162,8 @@ def preflight_experiment(
             severity=IssueSeverity.ERROR,
             message="selected sample medium is missing from the material library",
         ))
+
+    issues.extend(_state_geometry_consistency(config, rig))
 
     if config.solver_fidelity == SolverFidelity.HARDWARE_FIDELITY:
         if not material_report.hardware_fidelity_ready or (medium is not None and not medium.is_hardware_fidelity_data):
