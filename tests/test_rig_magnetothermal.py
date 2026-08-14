@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from pvl.experiments.models import CoilDriveState, DriveMode, ExperimentConfig
@@ -7,6 +9,10 @@ from pvl.geometry.gmsh_rig import RigGmshConfig, render_complete_rig_geo
 from pvl.materials.library import load_builtin_material_library
 from pvl.rig.fingerprint import rig_definition_fingerprint
 from pvl.solvers.getdp.rig_magnetothermal import render_rig_magnetothermal_pro
+from pvl.solvers.getdp.rig_magnetothermal_run import (
+    parse_getdp_real_system_global,
+    parse_getdp_real_system_scalar_line,
+)
 
 
 def _state():
@@ -31,6 +37,25 @@ def _state():
         coil_b=CoilDriveState(),
     )
     return topology, materials, manifest, experiment
+
+
+def test_real_thermal_table_parser_reads_last_scalar_not_complex_penultimate_column(tmp_path: Path):
+    axis = tmp_path / "temperature_axis.txt"
+    axis.write_text(
+        "15 15347 0 -0.03 0 0 0 0 293.155728329143\n"
+        "15 6601 0 0 0 0 0 0 293.1551610551936\n"
+        "15 6622 0 0.03 0 0 0 0 293.1553332628368\n",
+        encoding="utf-8",
+    )
+    y, temperature = parse_getdp_real_system_scalar_line(axis, coordinate_column=3)
+    assert tuple(y) == pytest.approx((-0.03, 0.0, 0.03))
+    assert tuple(temperature) == pytest.approx(
+        (293.155728329143, 293.1551610551936, 293.1553332628368)
+    )
+
+    global_value = tmp_path / "thermal_joule_input.txt"
+    global_value.write_text("0 0.00180796971081426\n", encoding="utf-8")
+    assert parse_getdp_real_system_global(global_value) == pytest.approx(0.00180796971081426)
 
 
 def test_magnetothermal_formulation_uses_joule_source_and_explicit_thermal_conductivity():
