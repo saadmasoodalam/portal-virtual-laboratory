@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from pvl.api.results import build_results_router
+from pvl.api.sweeps import build_sweeps_router
 from pvl.materials.library import MaterialLibrary
 from pvl.orchestrator.execution import PackageIntegrityError
 from pvl.orchestrator.jobs import MatrixJobStatus, enqueue_dc_matrix_job, load_matrix_job_status
@@ -61,9 +62,8 @@ def _response(status: MatrixJobStatus) -> MatrixJobStatusResponse:
 
 
 def build_matrix_jobs_router(*, materials: MaterialLibrary, results_root: Path) -> APIRouter:
-    # ``app.py`` already includes this router bundle. Keep the bundle prefix-free so it can also
-    # register the trusted scientific result catalog without forcing result routes underneath the
-    # matrix-job URL namespace.
+    # ``app.py`` includes this prefix-free router bundle. It collects independent API groups while
+    # preserving their own canonical URL namespaces.
     router = APIRouter()
 
     @router.post(
@@ -124,4 +124,5 @@ def build_matrix_jobs_router(*, materials: MaterialLibrary, results_root: Path) 
         return _response(status)
 
     router.include_router(build_results_router(results_root=results_root))
+    router.include_router(build_sweeps_router(materials=materials, results_root=results_root))
     return router
