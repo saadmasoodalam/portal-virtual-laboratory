@@ -1,12 +1,10 @@
-from types import SimpleNamespace
-
-import numpy as np
 import pytest
 
+from pvl.geometry.constructive import compile_constructive_topology
+from pvl.geometry.exploratory import architecture_example_rig_v1
 from pvl.validation.rig_magnetostatic import (
     RigDcConvergencePoint,
-    _finite_aperture_probe_values,
-    _probe_sample_coordinates,
+    _validate_sensor_volume_boxes,
     evaluate_rig_dc_convergence_gate,
 )
 
@@ -23,36 +21,24 @@ def _point(h: float, margin: float, nodes: int, tets: int, scale: float) -> RigD
     )
 
 
-def test_finite_aperture_sampling_is_fixed_symmetric_and_averaged_per_probe():
-    centers = (-0.03, 0.0, 0.03)
-    sample_y = _probe_sample_coordinates(centers, half_width_m=0.002, samples_per_probe=5)
-    assert len(sample_y) == 15
-    for index, center in enumerate(centers):
-        group = sample_y[index * 5 : (index + 1) * 5]
-        assert group[0] == pytest.approx(center - 0.002)
-        assert group[2] == pytest.approx(center)
-        assert group[-1] == pytest.approx(center + 0.002)
-
-    values = np.asarray(
-        [1, 1, 1, 1, 6, 2, 2, 2, 2, 7, 3, 3, 3, 3, 8],
-        dtype=float,
+def test_sensor_volume_boxes_are_wholly_inside_retained_material_regions():
+    topology = compile_constructive_topology(architecture_example_rig_v1())
+    hosts = _validate_sensor_volume_boxes(
+        topology,
+        (-0.060, -0.030, 0.0, 0.030, 0.060),
+        half_width_m=0.002,
     )
-    result = SimpleNamespace(
-        probe_y_m=np.asarray(sample_y, dtype=float),
-        probe_b_y_t=values,
-    )
-    averaged = _finite_aperture_probe_values(
-        result,
-        centers,
-        sample_y,
-        samples_per_probe=5,
-    )
-    assert averaged == pytest.approx((2.0, 3.0, 4.0))
+    assert hosts == ("air", "sample_medium", "sample_medium", "sample_medium", "air")
 
 
-def test_finite_aperture_sampling_rejects_even_sample_count():
-    with pytest.raises(ValueError, match="odd sample count"):
-        _probe_sample_coordinates((0.0,), half_width_m=0.002, samples_per_probe=4)
+def test_sensor_volume_guard_rejects_cube_crossing_sample_wall():
+    topology = compile_constructive_topology(architecture_example_rig_v1())
+    with pytest.raises(ValueError, match="sample wall/interface"):
+        _validate_sensor_volume_boxes(
+            topology,
+            (0.030,),
+            half_width_m=0.004,
+        )
 
 
 def test_complete_rig_convergence_gate_accepts_stabilized_mesh_and_domain_sequences():
