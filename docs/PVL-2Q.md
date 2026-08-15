@@ -108,15 +108,31 @@ The mesh axis remained outside the gate:
 - final 10 -> 8 mm mesh probe change: **4.412%**
 - final mesh center change: **3.053%**
 
-This shows that finite-domain truncation is no longer the active numerical blocker at the retained 8 mm shared baseline. The remaining blocker is near-Rig mesh stabilization.
+This showed that finite-domain truncation was no longer the active numerical blocker at the retained 8 mm shared baseline. The remaining blocker was near-Rig mesh stabilization.
+
+### Run #182
+
+The mesh sequence was extended with the same 0.8 refinement ratio to 10/8/6.4 mm while the already-passing domain sweep remained at the 8 mm shared baseline. The run passed the complete CI stack, including 155 Python tests, frontend typecheck/build, complete-Rig mesh integrity, real GetDP DC smoke solve, POC-001 through POC-005, and evidence upload.
+
+The finer mesh axis passed the unchanged 3% gate:
+
+- final 8 -> 6.4 mm mesh probe change: **1.988%**
+- final mesh center change: **1.421%**
+
+The retained 8 mm domain axis also remained inside tolerance:
+
+- final 125% -> 150% domain probe change: **2.151%**
+- final domain center change: **1.377%**
+
+The accepted finest candidate contains 157,655 nodes and 973,512 tetrahedra at the 125% shared domain.
 
 ## Current convergence candidate
 
-The mesh sequence is now **10 -> 8 -> 6.4 mm**, preserving a constant 0.8 refinement ratio instead of choosing an arbitrarily small final step merely to reduce the successive-change number.
+Run #182 established that 6.4 mm is the first retained near-Rig level to satisfy the mesh stabilization gate with the current 4 mm sensor-volume observable.
 
-The air-domain sequence remains **100/125/150% at the shared 8 mm baseline**. This factorized design deliberately isolates the mesh axis while retaining the already-passing air-domain check, and avoids multiplying the cost of the larger-domain solves before the finer mesh is shown to be useful.
+The final PVL-2Q numerical check therefore keeps the successful **10 -> 8 -> 6.4 mm** mesh sequence and moves the shared air-domain baseline from 8 mm to the accepted **6.4 mm** mesh. The outer-domain sequence remains **100/125/150%**.
 
-A pass on this factorized run is only an intermediate numerical result. PVL-2Q will then run a final air-domain confirmation at the accepted finest mesh before PR #22 can leave draft; the earlier 8 mm domain pass is not substituted for that final confirmation.
+This is the required final truncation-boundary confirmation at the accepted finest mesh. No equation, material property, source normalization, sensor-volume definition, mesh-refinement target, outer-boundary condition, or 3% tolerance is changed for this confirmation.
 
 ## Scientific/execution status
 
@@ -137,7 +153,7 @@ PR #22 remains draft until all of the following are demonstrated with verifiable
 - GetDP accepts the complete 3D H(curl) formulation and sensor-volume post-processing;
 - external-boundary and complete-Rig mesh integrity gates pass;
 - the retained 3% mesh convergence gate passes without post-hoc weakening;
-- the retained 3% air-domain convergence gate passes at the accepted finest mesh;
+- the retained 3% air-domain convergence gate passes at the accepted 6.4 mm finest mesh;
 - an active source produces finite, non-zero B;
 - frontend typecheck/build remains green;
 - POC-001 through POC-005 all remain green.
