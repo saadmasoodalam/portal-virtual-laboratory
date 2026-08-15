@@ -116,7 +116,7 @@ The mesh sequence is now **10 -> 8 -> 6.4 mm**, preserving a constant 0.8 refine
 
 The air-domain sequence remains **100/125/150% at the shared 8 mm baseline**. This factorized design deliberately isolates the mesh axis while retaining the already-passing air-domain check, and avoids multiplying the cost of the larger-domain solves before the finer mesh is shown to be useful.
 
-If the 6.4 mm mesh sequence passes, PVL-2Q will still require a final air-domain confirmation at the accepted finest mesh before PR #22 can leave draft. Passing the factorized run is not treated as sufficient reason to skip that confirmation.
+A pass on this factorized run is only an intermediate numerical result. PVL-2Q will then run a final air-domain confirmation at the accepted finest mesh before PR #22 can leave draft; the earlier 8 mm domain pass is not substituted for that final confirmation.
 
 ## Scientific/execution status
 
