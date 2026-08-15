@@ -39,16 +39,15 @@ def main() -> int:
         notes="PVL-2Q exploratory complete-Rig numerical convergence state",
     )
     try:
-        # Run #179 established that the fixed 4 mm 3D sensor-volume observable resolves the prior
-        # finite-domain blocker: the 125% -> 150% air-domain change fell to 2.15% at the probe set
-        # and 1.38% at the center, both inside the retained 3% gate. The remaining failure is mesh
-        # stabilization (10 -> 8 mm: 4.41% probe and 3.05% center). Extend only the mesh axis with
-        # the same 0.8 refinement ratio, 10 -> 8 -> 6.4 mm. Keep the already-passing domain sweep
-        # anchored at the shared 8 mm baseline so this run isolates whether the near-Rig solution
-        # enters the asymptotic regime without multiplying the cost of the larger-domain solves.
-        # If this mesh axis passes, PVL-2Q will still require a final domain confirmation at the
-        # accepted finest mesh before the PR can leave draft. Maxwell/material/source/boundary
-        # definitions, sensor volume and the 3% acceptance limits remain unchanged.
+        # Run #182 established mesh stabilization with the retained 4 mm 3D sensor-volume
+        # observable: the final 8 -> 6.4 mm change was 1.99% at the probe set and 1.42% at the
+        # center, both inside the unchanged 3% gate. The 8 mm domain sweep also remained inside
+        # tolerance (2.15% probe, 1.38% center), but PVL-2Q explicitly requires the truncation
+        # boundary check to be repeated at the accepted finest mesh before integration.
+        # Therefore preserve the successful 10 -> 8 -> 6.4 mm mesh sequence and move only the
+        # shared domain baseline from 8 mm to 6.4 mm. The 100/125/150% air margins, 4 mm sensor
+        # volumes, Maxwell formulation, material properties, source normalization, boundary
+        # condition and 3% acceptance limits remain unchanged.
         mesh_points, domain_points, gate = run_rig_dc_mesh_and_domain_convergence(
             experiment,
             topology,
@@ -56,7 +55,7 @@ def main() -> int:
             Path(args.output),
             mesh_sizes_m=(0.010, 0.008, 0.0064),
             air_margins=(1.00, 1.25, 1.50),
-            shared_mesh_size_m=0.008,
+            shared_mesh_size_m=0.0064,
             shared_air_margin=1.25,
             winding_mesh_size_m=0.002,
             steel_mesh_size_m=0.005,
