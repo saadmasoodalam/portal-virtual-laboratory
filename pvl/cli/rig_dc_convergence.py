@@ -39,20 +39,22 @@ def main() -> int:
         notes="PVL-2Q exploratory complete-Rig numerical convergence state",
     )
     try:
-        # Run #167 showed that even the finer 12/10/8 mm regime left a one-dimensional sensor
-        # aperture mesh-sensitive (4.37% final mesh-probe change, 4.59% center; 4.51% final-domain
-        # probe change, 3.04% center). Before spending another large refinement step on a
-        # discontinuous first-order H(curl) curl observable, retain the exact same mesh/domain
-        # sequence and replace only the measurement functional with a small fixed 3D sensor volume.
-        # Each 4 mm cube stays wholly inside either the sample medium or air. GetDP samples B on a
-        # fixed OnBox grid and PVL integrates B_y over that volume. Maxwell/material/source/boundary
-        # definitions and the 3% acceptance limits remain unchanged.
+        # Run #179 established that the fixed 4 mm 3D sensor-volume observable resolves the prior
+        # finite-domain blocker: the 125% -> 150% air-domain change fell to 2.15% at the probe set
+        # and 1.38% at the center, both inside the retained 3% gate. The remaining failure is mesh
+        # stabilization (10 -> 8 mm: 4.41% probe and 3.05% center). Extend only the mesh axis with
+        # the same 0.8 refinement ratio, 10 -> 8 -> 6.4 mm. Keep the already-passing domain sweep
+        # anchored at the shared 8 mm baseline so this run isolates whether the near-Rig solution
+        # enters the asymptotic regime without multiplying the cost of the larger-domain solves.
+        # If this mesh axis passes, PVL-2Q will still require a final domain confirmation at the
+        # accepted finest mesh before the PR can leave draft. Maxwell/material/source/boundary
+        # definitions, sensor volume and the 3% acceptance limits remain unchanged.
         mesh_points, domain_points, gate = run_rig_dc_mesh_and_domain_convergence(
             experiment,
             topology,
             materials,
             Path(args.output),
-            mesh_sizes_m=(0.012, 0.010, 0.008),
+            mesh_sizes_m=(0.010, 0.008, 0.0064),
             air_margins=(1.00, 1.25, 1.50),
             shared_mesh_size_m=0.008,
             shared_air_margin=1.25,
