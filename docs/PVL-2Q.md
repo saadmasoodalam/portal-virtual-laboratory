@@ -1,10 +1,10 @@
 # PVL-2Q — Complete-Rig 3D DC Magnetostatic Solver Gate
 
-Status: implementation candidate
+Status: validation complete; integration candidate
 
 ## Objective
 
-PVL-2Q connects the complete-Rig exploratory Gmsh topology validated in PVL-2P to the repository's established magnetostatic solver stack. The unit introduces the first complete-Rig three-dimensional GetDP DC field solve, but it remains an **exploratory solver-validation primitive** until mesh/domain convergence and immutable single-run execution integration are complete.
+PVL-2Q connects the complete-Rig exploratory Gmsh topology validated in PVL-2P to the repository's established magnetostatic solver stack. The unit introduces the first complete-Rig three-dimensional GetDP DC field solve while preserving the existing PVL execution and scientific-boundary controls.
 
 PVL-2Q contains only ordinary magnetostatics. It does not add an eddy-current term, thermal coupling, anomaly classifier, biological test, Ramal/UBL construct, or Portal Hypothesis term.
 
@@ -58,7 +58,7 @@ This preserves the already validated POC-002 convention: equal positive currents
 
 ## Current smoke state
 
-The first CI state remains deliberately simple: exploratory complete-Rig geometry, Coil A = +1 A DC, Coil B = OFF, a 500-turn exploratory winding pack, the retained linear material library, one complete-Rig Gmsh mesh, and one real-valued GetDP magnetostatic solve.
+The CI state remains deliberately simple: exploratory complete-Rig geometry, Coil A = +1 A DC, Coil B = OFF, a 500-turn exploratory winding pack, the retained linear material library, one complete-Rig Gmsh mesh, and one real-valued GetDP magnetostatic solve.
 
 The command is:
 
@@ -68,7 +68,7 @@ The command records solver versions, mesh counts, outer-boundary triangle count,
 
 ## Numerical convergence controls
 
-The retained acceptance threshold is 3% for both the five-probe aggregate and center observable. That criterion is not loosened after observing a result.
+The retained acceptance threshold is 3% for both the five-probe aggregate and center observable. That criterion was never loosened after observing a result.
 
 Local component targets remain:
 
@@ -126,34 +126,46 @@ The retained 8 mm domain axis also remained inside tolerance:
 
 The accepted finest candidate contains 157,655 nodes and 973,512 tetrahedra at the 125% shared domain.
 
-## Current convergence candidate
+### Run #184 — final finest-mesh air-domain confirmation
 
-Run #182 established that 6.4 mm is the first retained near-Rig level to satisfy the mesh stabilization gate with the current 4 mm sensor-volume observable.
+Run #184 kept the successful 10/8/6.4 mm mesh sequence unchanged and moved the 100/125/150% air-domain sweep to the accepted **6.4 mm** near-Rig mesh. No equation, material parameter, source normalization, sensor-volume definition, local refinement target, outer-boundary condition, or acceptance threshold changed.
 
-The final PVL-2Q numerical check therefore keeps the successful **10 -> 8 -> 6.4 mm** mesh sequence and moves the shared air-domain baseline from 8 mm to the accepted **6.4 mm** mesh. The outer-domain sequence remains **100/125/150%**.
+The final 125% -> 150% truncation-boundary comparison passed the retained 3% gate:
 
-This is the required final truncation-boundary confirmation at the accepted finest mesh. No equation, material property, source normalization, sensor-volume definition, mesh-refinement target, outer-boundary condition, or 3% tolerance is changed for this confirmation.
+- final domain probe peak-normalized change: **2.253%**
+- final domain center relative change: **1.416%**
+
+The same run reconfirmed the accepted mesh result:
+
+- final 8 -> 6.4 mm mesh probe change: **1.988%**
+- final mesh center change: **1.421%**
+
+The 6.4 mm / 125% shared solution again contained 157,655 nodes and 973,512 tetrahedra. The 150% domain contained 161,711 nodes and 995,423 tetrahedra. All sampled fields were finite and the active-source fields were non-zero.
+
+Run #184 also passed the entire retained CI stack: 155 Python tests, complete-Rig mesh integrity, the real GetDP DC smoke solve, frontend typecheck/build, POC-001, POC-002, POC-003, POC-004, POC-005, and validation-evidence upload.
 
 ## Scientific/execution status
 
-An actual Gmsh/GetDP calculation occurs in the PVL-2Q smoke and convergence primitives, so their local solver evidence records `solver_execution=true`.
+PVL-2Q numerical validation is complete for the retained exploratory linear-material complete-Rig DC magnetostatic model. Actual Gmsh/GetDP calculations occur in the smoke and convergence primitives, and their local solver evidence records `solver_execution=true`.
 
-However, these are **not yet executed immutable PVL experiment runs**. They do not bypass PVL-2N. Exact package checksum, run selection, Rig/material fingerprints, single-run confirmation, no-batch rule and no-biological-testing rule remain mandatory for persisted experiment execution.
+These solver-validation primitives are **not yet executed immutable PVL experiment runs** and do not bypass PVL-2N. Exact package checksum, run selection, Rig/material fingerprints, single-run confirmation, no-batch rule and no-biological-testing rule remain mandatory for persisted experiment execution.
 
 ## Scientific boundary
 
-A passing PVL-2Q result validates numerical stabilization of an ordinary exploratory finite-element magnetostatic implementation for the retained Rig geometry and material baselines. It does not demonstrate a portal, spacetime coupling, anomalous physics, or a valid high-fidelity prediction of the future physical Rig.
+The passing PVL-2Q result validates numerical stabilization of an ordinary exploratory finite-element magnetostatic implementation for the retained Rig geometry and material baselines. It does not demonstrate a portal, spacetime coupling, anomalous physics, or a valid high-fidelity prediction of the future physical Rig.
 
 The governing equation, material parameters, winding source normalization, outer boundary condition, sensor-volume definition, and 3% acceptance criterion remain ordinary-physics controls and are not modified by the Portal Hypothesis Layer.
 
-## Merge gate
+## Merge gate status
 
-PR #22 remains draft until all of the following are demonstrated with verifiable evidence:
+The PVL-2Q implementation evidence now satisfies every retained merge criterion:
 
-- GetDP accepts the complete 3D H(curl) formulation and sensor-volume post-processing;
-- external-boundary and complete-Rig mesh integrity gates pass;
-- the retained 3% mesh convergence gate passes without post-hoc weakening;
-- the retained 3% air-domain convergence gate passes at the accepted 6.4 mm finest mesh;
-- an active source produces finite, non-zero B;
-- frontend typecheck/build remains green;
-- POC-001 through POC-005 all remain green.
+- GetDP accepts the complete 3D H(curl) formulation and sensor-volume post-processing: **PASS**
+- external-boundary and complete-Rig mesh integrity gates: **PASS**
+- retained 3% mesh convergence gate without post-hoc weakening: **PASS**
+- retained 3% air-domain convergence gate at the accepted 6.4 mm finest mesh: **PASS**
+- active source produces finite, non-zero B: **PASS**
+- frontend typecheck/build: **PASS**
+- POC-001 through POC-005: **PASS**
+
+PR #22 can leave draft and proceed to integration once this evidence-recording commit itself is green in CI and the PR head remains mergeable with no unresolved review threads.
